@@ -15,8 +15,29 @@ const G = 9.8;
 const PADDLE_WIDTH: f32 = 10;
 const PADDLE_HEIGHT: f32 = 60;
 
-const PLAYER_SPEED: f32 = 5.0;
+const PLAYER_SPEED: f32 = 10;
 const PLAYER_COOLDOWN: f32 = 0.5;
+
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+const allocator = gpa.allocator();
+
+var projectiles: ArrayList(Projectile) = undefined;
+
+var player1 = Player.player1();
+var player2 = Player.player2();
+
+const Side = enum {
+    Left,
+    Right,
+};
+
+const GameState = enum {
+    Start,
+    Loop,
+};
+
+var game_state: GameState = .Start;
+var countdown: f32 = 3.5;
 
 const Player = struct {
     rectangle: Rectangle,
@@ -24,6 +45,8 @@ const Player = struct {
     charge: f32 = 0.0,
     cooldown: f32 = PLAYER_COOLDOWN,
     direction: Vector2 = .{ .x = 1, .y = 0 },
+    life: f32 = 100,
+    side: Side,
 
     fn player1() Player {
         return .{
@@ -34,6 +57,7 @@ const Player = struct {
                 .height = PADDLE_HEIGHT,
             },
             .color = ray.BLUE,
+            .side = .Left,
         };
     }
 
@@ -46,17 +70,24 @@ const Player = struct {
                 .height = PADDLE_HEIGHT,
             },
             .color = ray.ORANGE,
+            .side = .Right,
         };
     }
 
-    fn getShootingPosition(self: *@This()) f32 {
-        return if (self.rectangle.x < WIDTH / 2) 1 else -1;
-    }
-
-    fn draw(self: *const @This()) void {
+    fn draw(self: *const @This()) !void {
         ray.DrawRectangleRec(self.rectangle, self.color);
 
-        ray.DrawCircleV(.{ .x = self.rectangle.x, .y = 40 }, self.charge, self.color);
+        // draw life
+        {
+            const font_size: c_int = 30;
+            const string = try std.fmt.allocPrintZ(allocator, "Life {d}", .{self.life});
+            const string_width = ray.MeasureText(string, font_size);
+            const position_x: c_int = switch (self.side) {
+                .Left => 10,
+                .Right => @as(c_int, WIDTH) - string_width - 10,
+            };
+            ray.DrawText(string, position_x, 10, font_size, self.color);
+        }
     }
 
     fn update(self: *@This()) void {
@@ -69,15 +100,22 @@ const Player = struct {
     }
 
     fn move(self: *@This(), velocity: Vector2) void {
-        const new_pos = ray.Vector2Add(.{ .x = self.rectangle.x, .y = self.rectangle.y }, velocity);
+        var new_pos = ray.Vector2Add(.{ .x = self.rectangle.x, .y = self.rectangle.y }, velocity);
+
+        if (new_pos.y <= 0) {
+            new_pos.y = 0;
+        } else if (new_pos.y + self.rectangle.height >= HEIGHT) {
+            new_pos.y = HEIGHT - self.rectangle.height;
+        }
+
         self.rectangle.x = new_pos.x;
         self.rectangle.y = new_pos.y;
     }
 
-    fn shoot(self: *@This(), projectiles: *ArrayList(Projectile)) !void {
-        if (self.charge >= Projectile.MIN_SIZE) {
-            try projectiles.append(Projectile.init(self));
-            self.charge = 0;
+    fn shoot(self: *@This(), projectile_list: *ArrayList(Projectile)) !void {
+        if (self.cooldown <= 0 and self.charge >= Projectile.MIN_SIZE) {
+            try projectile_list.append(Projectile.init(self));
+            self.charge = Projectile.MIN_SIZE;
             self.cooldown = PLAYER_COOLDOWN;
         }
     }
@@ -91,23 +129,27 @@ const Projectile = struct {
     forces: Vector2 = .{ .x = 0, .y = 0 },
     to_delete: bool = false,
 
-    const MIN_SIZE: f32 = 1.0;
+    const MIN_SIZE: f32 = 3.0;
     const MAX_SIZE: f32 = 20.0;
 
-    const MIN_VELOCITY: f32 = 2.0;
+    const MIN_VELOCITY: f32 = 1.0;
     const MAX_VELOCITY: f32 = 7.0;
 
     const MAX_DISTANCE_GRAVITY: f32 = 100;
 
     fn init(player: *Player) Projectile {
-        std.debug.print("{d}\n", .{player.charge});
+        const position_multiplier: f32 = switch (player.side) {
+            .Left => 1,
+            .Right => -1,
+        };
+
         return .{
             .position = ray.Vector2Add(.{
                 .x = player.rectangle.x,
                 .y = player.rectangle.y,
             }, .{
                 .y = PADDLE_HEIGHT / 2,
-                .x = (PADDLE_WIDTH + player.charge + 10) * player.getShootingPosition(),
+                .x = (PADDLE_WIDTH + player.charge + 10) * position_multiplier,
             }),
             .radius = player.charge,
             .velocity = ray.Vector2Scale(player.direction, calculateVelocity(player.charge)),
@@ -122,7 +164,6 @@ const Projectile = struct {
 
     fn draw(self: *const @This()) void {
         ray.DrawCircleV(self.position, self.radius, self.player.color);
-        // ray.DrawLineV(self.position, ray.Vector2Add(self.position, ray.Vector2Scale(self.forces, 1000)), self.player.color);
     }
 
     fn update(self: *@This()) void {
@@ -132,7 +173,8 @@ const Projectile = struct {
     }
 
     fn checkProjectileCollision(self: *@This(), target: *@This()) bool {
-        return ray.CheckCollisionCircles(self.position, self.radius, target.position, target.radius);
+        const distance = ray.Vector2Distance(self.position, target.position);
+        return distance <= (self.radius + target.radius);
     }
 
     fn checkPlayerCollision(self: *@This(), player: *Player) void {
@@ -156,22 +198,30 @@ const Projectile = struct {
 
     fn computeGravity(self: *@This(), target: *@This()) void {
         const distance = ray.Vector2Distance(self.position, target.position);
-        const gravity = (G * self.radius * target.radius * 10) / (distance * distance);
+        const gravity = (G * self.radius * self.radius * target.radius * target.radius) / (distance * distance);
 
         const direction = ray.Vector2Normalize(ray.Vector2Subtract(self.position, target.position));
-        std.debug.print("gravity: {d}\n", .{gravity});
 
-        self.forces = ray.Vector2Add(self.forces, ray.Vector2Negate(ray.Vector2Scale(direction, gravity / self.radius)));
-        // self.forces = ray.Vector2Negate(ray.Vector2Scale(direction, gravity / self.size));
-        // std.debug.print("self: {any}\n", .{self.forces});
-        target.forces = ray.Vector2Add(target.forces, ray.Vector2Scale(direction, gravity / target.radius));
-        // target.forces = ray.Vector2Scale(direction, gravity / target.size);
-        // std.debug.print("target: {any}\n", .{target.forces});
+        self.forces = ray.Vector2Add(self.forces, ray.Vector2Negate(ray.Vector2Scale(direction, gravity / (self.radius * self.radius))));
+        target.forces = ray.Vector2Add(target.forces, ray.Vector2Scale(direction, gravity / (target.radius * target.radius)));
     }
 
-    fn addImpulse(self: *@This(), target: *@This()) void {
-        _ = self;
-        _ = target;
+    fn consume(self: *@This(), target: *@This()) void {
+        const size_diff = self.radius - target.radius;
+        const min_size_diff = 0;
+        const max_size_diff = MAX_SIZE - MIN_SIZE;
+
+        const min_impact = 0.1;
+        const max_impact = 0.99;
+
+        const rate = (size_diff - min_size_diff) / (max_size_diff - min_size_diff);
+        const impact = max_impact - rate * (max_impact - min_impact);
+
+        self.forces = ray.Vector2Add(self.forces, ray.Vector2Scale(target.velocity, impact * impact));
+
+        if (self.radius < MAX_SIZE) {
+            self.radius += target.radius;
+        }
     }
 };
 
@@ -181,78 +231,28 @@ pub fn main() !void {
 
     var time_since_last_update: f32 = 0;
 
-    var player1 = Player.player1();
-    var player2 = Player.player2();
-
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
-
-    var projectiles: ArrayList(Projectile) = ArrayList(Projectile).init(allocator);
+    projectiles = ArrayList(Projectile).init(allocator);
     defer projectiles.deinit();
 
     while (!ray.WindowShouldClose()) {
         time_since_last_update += ray.GetFrameTime();
 
-        var do_post_update = false;
+        if (countdown > 0) {
+            countdown -= ray.GetFrameTime();
+        }
+
         // update
         if (time_since_last_update > TIME_PER_UPDATE) {
             time_since_last_update = 0;
-            do_post_update = true;
 
-            if (ray.IsKeyDown(ray.KEY_DOWN)) {
-                player1.move(.{ .y = 1 * PLAYER_SPEED });
-            } else if (ray.IsKeyDown(ray.KEY_UP)) {
-                player1.move(.{ .y = -1 * PLAYER_SPEED });
+            switch (game_state) {
+                .Start => {
+                    try updateStart();
+                },
+                .Loop => {
+                    try updateLoop();
+                },
             }
-
-            if (ray.IsKeyDown(ray.KEY_F)) {
-                try player1.shoot(&projectiles);
-            }
-
-            for (projectiles.items, 0..) |*projectile, i| {
-                for (projectiles.items, 0..) |*target, j| {
-                    if (i >= j) continue;
-
-                    if (projectile.checkProjectileCollision(target)) {
-                        if (projectile.radius == target.radius) {
-                            projectile.to_delete = true;
-                            target.to_delete = true;
-                        }
-                        if (projectile.radius > target.radius) {
-                            target.to_delete = true;
-                            projectile.addImpulse(target);
-                        } else {
-                            projectile.to_delete = true;
-                            target.addImpulse(projectile);
-                        }
-                        continue;
-                    }
-
-                    projectile.computeGravity(target);
-                    std.debug.print("calculating {d} {d}\n", .{ i, j });
-                }
-
-                if (projectile.checkOutOfBounds()) {
-                    projectile.to_delete = true;
-                    continue;
-                }
-
-                projectile.checkPlayerCollision(&player1);
-                projectile.checkPlayerCollision(&player2);
-
-                projectile.update();
-            }
-
-            var i = projectiles.items.len;
-            while (i > 0) : (i -= 1) {
-                if (projectiles.items[i - 1].to_delete) {
-                    std.debug.print("delete {d} total {d}", .{ i - 1, projectiles.items.len });
-                    _ = projectiles.orderedRemove(i - 1);
-                }
-            }
-
-            player1.update();
-            player2.update();
         }
 
         // drawing
@@ -261,16 +261,110 @@ pub fn main() !void {
             defer ray.EndDrawing();
 
             ray.ClearBackground(ray.BLACK);
-            ray.DrawFPS(10, 10);
+            // ray.DrawFPS(10, 10);
 
-            for (projectiles.items) |projectile| {
-                projectile.draw();
+            if (game_state == .Start) {
+                try drawStart();
             }
-
-            player1.draw();
-            player2.draw();
+            try drawLoop();
         }
     }
+}
+
+fn updateStart() !void {
+    if (countdown <= 0) {
+        game_state = .Loop;
+    }
+}
+
+fn drawStart() !void {
+    const font_size: c_int = 60;
+
+    {
+        const string = "Game is starting";
+        const string_width = @divExact(ray.MeasureText(string, font_size), 2);
+        const position_x: c_int = @as(c_int, WIDTH / 2) - (string_width);
+        ray.DrawText(string, position_x, 100, font_size, ray.WHITE);
+    }
+
+    {
+        const remaining = @floor(countdown);
+        const string = try std.fmt.allocPrintZ(allocator, "{d}", .{remaining});
+        const string_width = @divExact(ray.MeasureText(string, font_size), 2);
+        const position_x: c_int = @as(c_int, WIDTH / 2) - (string_width);
+        ray.DrawText(string, position_x, 150, font_size, ray.WHITE);
+    }
+}
+
+fn updateLoop() !void {
+    if (ray.IsKeyDown(ray.KEY_DOWN)) {
+        player1.move(.{ .y = 1 * PLAYER_SPEED });
+    } else if (ray.IsKeyDown(ray.KEY_UP)) {
+        player1.move(.{ .y = -1 * PLAYER_SPEED });
+    }
+
+    if (ray.IsKeyDown(ray.KEY_F)) {
+        try player1.shoot(&projectiles);
+    }
+
+    for (projectiles.items, 0..) |*projectile, i| {
+        for (projectiles.items, 0..) |*target, j| {
+            if (i >= j) continue;
+
+            if (projectile.checkProjectileCollision(target)) {
+                if (projectile.radius == target.radius) {
+                    projectile.to_delete = true;
+                    target.to_delete = true;
+                }
+                if (projectile.radius > target.radius) {
+                    target.to_delete = true;
+                    projectile.consume(target);
+                } else {
+                    projectile.to_delete = true;
+                    target.consume(projectile);
+                }
+                continue;
+            }
+
+            projectile.computeGravity(target);
+        }
+
+        if (projectile.checkOutOfBounds()) {
+            projectile.to_delete = true;
+
+            if (projectile.position.x <= WIDTH / 2) {
+                player1.life -= @ceil(projectile.radius);
+            } else {
+                player2.life -= @ceil(projectile.radius);
+            }
+
+            continue;
+        }
+
+        projectile.checkPlayerCollision(&player1);
+        projectile.checkPlayerCollision(&player2);
+
+        projectile.update();
+    }
+
+    var i = projectiles.items.len;
+    while (i > 0) : (i -= 1) {
+        if (projectiles.items[i - 1].to_delete) {
+            _ = projectiles.orderedRemove(i - 1);
+        }
+    }
+
+    player1.update();
+    player2.update();
+}
+
+fn drawLoop() !void {
+    for (projectiles.items) |projectile| {
+        projectile.draw();
+    }
+
+    try player1.draw();
+    try player2.draw();
 }
 
 test "simple test" {}

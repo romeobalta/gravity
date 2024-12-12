@@ -8,7 +8,8 @@ const Rectangle = ray.struct_Rectangle;
 const WIDTH: f32 = 800;
 const HEIGHT: f32 = 600;
 
-const TIME_PER_UPDATE: f32 = @as(f32, 1.0 / 60.0);
+const UPDATES_PER_SECOND: f32 = 60;
+const TIME_PER_UPDATE: f32 = 1.0 / UPDATES_PER_SECOND;
 
 const G = 9.8;
 
@@ -22,6 +23,7 @@ var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
 var projectiles: ArrayList(Projectile) = undefined;
+var particles: ArrayList(Particle) = undefined;
 
 var player1 = Player.player1();
 var player2 = Player.player2();
@@ -36,7 +38,8 @@ const GameState = enum {
     Loop,
 };
 
-var game_state: GameState = .Start;
+// TODO: .Start
+var game_state: GameState = .Loop;
 var countdown: f32 = 3.5;
 
 const Player = struct {
@@ -75,7 +78,16 @@ const Player = struct {
     }
 
     fn draw(self: *const @This()) !void {
-        ray.DrawRectangleRec(self.rectangle, self.color);
+        ray.DrawRectangleLinesEx(self.rectangle, 1, self.color);
+
+        const charge_height = ray.Remap(self.charge, Projectile.MIN_SIZE, Projectile.MAX_SIZE, 0, self.rectangle.height);
+        const charge_rect: ray.struct_Rectangle = .{
+            .x = self.rectangle.x,
+            .y = self.rectangle.y + (self.rectangle.height - charge_height) / 2,
+            .width = self.rectangle.width,
+            .height = charge_height,
+        };
+        ray.DrawRectangleRec(charge_rect, self.color);
 
         // draw life
         {
@@ -128,8 +140,9 @@ const Projectile = struct {
     player: *Player,
     forces: Vector2 = .{ .x = 0, .y = 0 },
     to_delete: bool = false,
+    tail: ArrayList(Particle),
 
-    const MIN_SIZE: f32 = 3.0;
+    const MIN_SIZE: f32 = 5.0;
     const MAX_SIZE: f32 = 20.0;
 
     const MIN_VELOCITY: f32 = 1.0;
@@ -154,15 +167,24 @@ const Projectile = struct {
             .radius = player.charge,
             .velocity = ray.Vector2Scale(player.direction, calculateVelocity(player.charge)),
             .player = player,
+            .tail = ArrayList(Particle).init(allocator),
         };
     }
 
+    fn deinit(self: *@This()) void {
+        self.tail.clearAndFree();
+        self.tail.deinit();
+    }
+
     fn calculateVelocity(size: f32) f32 {
-        const rate = (size - MIN_SIZE) / (MAX_SIZE - MIN_SIZE);
-        return MAX_VELOCITY - rate * (MAX_VELOCITY - MIN_VELOCITY);
+        return ray.Remap(size, MIN_SIZE, MAX_SIZE, MAX_VELOCITY, MIN_VELOCITY);
     }
 
     fn draw(self: *const @This()) void {
+        for (self.tail.items) |particle| {
+            particle.draw();
+        }
+
         ray.DrawCircleV(self.position, self.radius, self.player.color);
     }
 
@@ -170,6 +192,20 @@ const Projectile = struct {
         self.velocity = ray.Vector2Add(self.velocity, self.forces);
         self.position = ray.Vector2Add(self.position, self.velocity);
         self.forces = ray.Vector2Zero();
+
+        {
+            var i = self.tail.items.len;
+            while (i > 0) : (i -= 1) {
+                const index = i - 1;
+                var particle = &self.tail.items[index];
+
+                particle.update();
+
+                if (particle.size <= 0) {
+                    _ = self.tail.orderedRemove(index);
+                }
+            }
+        }
     }
 
     fn checkProjectileCollision(self: *@This(), target: *@This()) bool {
@@ -210,18 +246,79 @@ const Projectile = struct {
         const size_diff = self.radius - target.radius;
         const min_size_diff = 0;
         const max_size_diff = MAX_SIZE - MIN_SIZE;
-
         const min_impact = 0.1;
         const max_impact = 0.99;
-
-        const rate = (size_diff - min_size_diff) / (max_size_diff - min_size_diff);
-        const impact = max_impact - rate * (max_impact - min_impact);
+        const impact = ray.Remap(size_diff, min_size_diff, max_size_diff, max_impact, min_impact);
 
         self.forces = ray.Vector2Add(self.forces, ray.Vector2Scale(target.velocity, impact * impact));
 
         if (self.radius < MAX_SIZE) {
             self.radius += target.radius;
         }
+    }
+};
+
+fn componentBlendWithBlack(component: u8, opacity: u8) u8 {
+    return @intCast(@as(u16, component) * @as(u16, opacity) / 255);
+}
+
+fn colorBlendWithBlack(color: ray.struct_Color, opacity: u8) ray.struct_Color {
+    return .{
+        .r = componentBlendWithBlack(color.r, opacity),
+        .g = componentBlendWithBlack(color.g, opacity),
+        .b = componentBlendWithBlack(color.b, opacity),
+        .a = color.a,
+    };
+}
+
+const Particle = struct {
+    position: Vector2,
+    size: f32,
+    velocity: Vector2 = ray.Vector2Zero(),
+    decay_speed: f32 = 0.1,
+    color: ray.struct_Color = ray.WHITE,
+
+    const MIN_SIZE: f32 = 2;
+    const MAX_SIZE: f32 = 5;
+
+    fn initDebris(position: Vector2, velocity_x: f32, color: ray.struct_Color) @This() {
+        const flip: f32 = if (std.Random.boolean(std.crypto.random)) -1 else 1;
+        const random = std.Random.float(std.crypto.random, f32); // [0, 1)
+        const size = MIN_SIZE + (MAX_SIZE - MIN_SIZE) * random;
+
+        const velocity: Vector2 = .{
+            .x = -velocity_x * 0.1,
+            .y = std.Random.float(std.crypto.random, f32) * flip,
+        };
+
+        return .{
+            .position = position,
+            .size = size,
+            .velocity = ray.Vector2Scale(velocity, 3),
+            .color = color,
+        };
+    }
+
+    fn initTrail(position: Vector2, size: f32, decay: f32, color: ray.struct_Color) @This() {
+        return .{
+            .position = position,
+            .size = size,
+            .decay_speed = decay,
+            .color = colorBlendWithBlack(color, 80),
+        };
+    }
+
+    fn update(self: *@This()) void {
+        self.position = ray.Vector2Add(self.position, self.velocity);
+        self.size -= self.decay_speed;
+    }
+
+    fn draw(self: *const @This()) void {
+        ray.DrawCircleV(
+            self.position,
+            self.size,
+            self.color,
+        );
     }
 };
 
@@ -233,6 +330,9 @@ pub fn main() !void {
 
     projectiles = ArrayList(Projectile).init(allocator);
     defer projectiles.deinit();
+
+    particles = ArrayList(Particle).init(allocator);
+    defer particles.deinit();
 
     while (!ray.WindowShouldClose()) {
         time_since_last_update += ray.GetFrameTime();
@@ -315,12 +415,17 @@ fn updateLoop() !void {
                 if (projectile.radius == target.radius) {
                     projectile.to_delete = true;
                     target.to_delete = true;
+
+                    try createDebris(projectile);
+                    try createDebris(target);
                 }
                 if (projectile.radius > target.radius) {
                     target.to_delete = true;
+                    try createDebris(target);
                     projectile.consume(target);
                 } else {
                     projectile.to_delete = true;
+                    try createDebris(projectile);
                     target.consume(projectile);
                 }
                 continue;
@@ -338,6 +443,8 @@ fn updateLoop() !void {
                 player2.life -= @ceil(projectile.radius);
             }
 
+            try createDebris(projectile);
+
             continue;
         }
 
@@ -345,12 +452,47 @@ fn updateLoop() !void {
         projectile.checkPlayerCollision(&player2);
 
         projectile.update();
+
+        if (!projectile.to_delete) {
+            // calculate tail decay speed
+            const tail_length = 200;
+            const speed = ray.Vector2Length(projectile.velocity) * UPDATES_PER_SECOND;
+            const tail_duration = tail_length / speed;
+            const particle_decay = (projectile.radius / tail_duration) / UPDATES_PER_SECOND;
+
+            try projectile.tail.append(Particle.initTrail(
+                projectile.position,
+                projectile.radius,
+                particle_decay,
+                projectile.player.color,
+            ));
+        }
     }
 
-    var i = projectiles.items.len;
-    while (i > 0) : (i -= 1) {
-        if (projectiles.items[i - 1].to_delete) {
-            _ = projectiles.orderedRemove(i - 1);
+    {
+        var i = projectiles.items.len;
+        while (i > 0) : (i -= 1) {
+            const index = i - 1;
+            const projectile = &projectiles.items[index];
+
+            if (projectile.to_delete) {
+                projectile.deinit();
+                _ = projectiles.orderedRemove(index);
+            }
+        }
+    }
+
+    {
+        var i = particles.items.len;
+        while (i > 0) : (i -= 1) {
+            const index = i - 1;
+            var particle = &particles.items[index];
+
+            particle.update();
+
+            if (particle.size <= 0) {
+                _ = particles.orderedRemove(index);
+            }
         }
     }
 
@@ -359,12 +501,28 @@ fn updateLoop() !void {
 }
 
 fn drawLoop() !void {
+    for (particles.items) |particle| {
+        particle.draw();
+    }
+
     for (projectiles.items) |projectile| {
         projectile.draw();
     }
 
     try player1.draw();
     try player2.draw();
+}
+
+fn createDebris(projectile: *Projectile) !void {
+    const particle_count = std.Random.intRangeAtMost(std.crypto.random, usize, 5, 10);
+
+    for (0..particle_count) |_| {
+        try particles.append(Particle.initDebris(
+            projectile.position,
+            projectile.velocity.x,
+            projectile.player.color,
+        ));
+    }
 }
 
 test "simple test" {}

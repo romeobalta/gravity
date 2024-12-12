@@ -35,6 +35,15 @@ pub fn build(b: *std.Build) void {
 
     exe.linkLibrary(raylib_dep.artifact("raylib"));
 
+    const exe_check = b.addExecutable(.{
+        .name = "gravity",
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    exe_check.linkLibrary(raylib_dep.artifact("raylib"));
+
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).
@@ -63,6 +72,11 @@ pub fn build(b: *std.Build) void {
         // This will evaluate the `run` step rather than the default, which is "install".
         const run_step = b.step("run", "Run the app");
         run_step.dependOn(&run_cmd.step);
+    }
+
+    {
+        const check = b.step("check", "Error checks");
+        check.dependOn(&exe_check.step);
     }
 
     {

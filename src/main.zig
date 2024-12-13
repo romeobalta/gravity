@@ -271,12 +271,26 @@ fn colorBlendWithBlack(color: ray.struct_Color, opacity: u8) ray.struct_Color {
     };
 }
 
+fn componentBlend(component: u8, blend: u8, amount: u8) u8 {
+    return @intCast((@as(u16, component) * @as(u16, amount) + @as(u16, blend) * (255 - @as(u16, amount))) / 255);
+}
+
+fn colorBlend(color: ray.struct_Color, blend: ray.struct_Color, amount: u8) ray.struct_Color {
+    return .{
+        .r = componentBlend(color.r, blend.r, amount),
+        .g = componentBlend(color.g, blend.g, amount),
+        .b = componentBlend(color.b, blend.b, amount),
+        .a = color.a,
+    };
+}
+
 const Particle = struct {
     position: Vector2,
     size: f32,
     velocity: Vector2 = ray.Vector2Zero(),
     decay_speed: f32 = 0.1,
     color: ray.struct_Color = ray.WHITE,
+    projectile: ?*Projectile = null,
 
     const MIN_SIZE: f32 = 2;
     const MAX_SIZE: f32 = 5;
@@ -299,12 +313,34 @@ const Particle = struct {
         };
     }
 
-    fn initTrail(position: Vector2, size: f32, decay: f32, color: ray.struct_Color) @This() {
+    fn initTrail(projectile: *Projectile) @This() {
+        const min_tail_length: f32 = 0;
+        const max_tail_length: f32 = 200;
+        const min_speed: f32 = 0;
+        const max_speed: f32 = 400;
+
+        const speed = ray.Vector2Length(projectile.velocity) * UPDATES_PER_SECOND;
+        const tail_length = ray.Remap(speed, min_speed, max_speed, min_tail_length, max_tail_length);
+        const tail_duration = tail_length / speed;
+        const decay = if (tail_duration > 0) (projectile.radius / tail_duration) / UPDATES_PER_SECOND else projectile.radius;
+
+        const min_color_speed: f32 = 100;
+        const blend_amount: u8 = @intFromFloat(ray.Clamp(ray.Remap(
+            speed,
+            min_color_speed,
+            max_speed,
+            @as(f32, 200),
+            @as(f32, 40),
+        ), 40, 200));
+
+        const color = colorBlend(projectile.player.color, ray.BLACK, blend_amount);
+
         return .{
-            .position = position,
-            .size = size,
+            .position = projectile.position,
+            .size = projectile.radius,
             .decay_speed = decay,
-            .color = colorBlendWithBlack(color, 80),
+            .color = color,
+            .projectile = projectile,
         };
     }
 
@@ -454,18 +490,7 @@ fn updateLoop() !void {
         projectile.update();
 
         if (!projectile.to_delete) {
-            // calculate tail decay speed
-            const tail_length = 200;
-            const speed = ray.Vector2Length(projectile.velocity) * UPDATES_PER_SECOND;
-            const tail_duration = tail_length / speed;
-            const particle_decay = (projectile.radius / tail_duration) / UPDATES_PER_SECOND;
-
-            try projectile.tail.append(Particle.initTrail(
-                projectile.position,
-                projectile.radius,
-                particle_decay,
-                projectile.player.color,
-            ));
+            try projectile.tail.append(Particle.initTrail(projectile));
         }
     }
 

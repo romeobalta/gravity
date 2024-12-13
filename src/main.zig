@@ -3,6 +3,7 @@ const ray = @import("raylib.zig");
 
 const ArrayList = std.ArrayList;
 const Vector2 = ray.struct_Vector2;
+const Color = ray.struct_Color;
 const Rectangle = ray.struct_Rectangle;
 
 const WIDTH: f32 = 800;
@@ -44,7 +45,7 @@ var countdown: f32 = 3.5;
 
 const Player = struct {
     rectangle: Rectangle,
-    color: ray.struct_Color,
+    color: ray.Color,
     charge: f32 = 0.0,
     cooldown: f32 = PLAYER_COOLDOWN,
     direction: Vector2 = .{ .x = 1, .y = 0 },
@@ -262,7 +263,7 @@ fn componentBlendWithBlack(component: u8, opacity: u8) u8 {
     return @intCast(@as(u16, component) * @as(u16, opacity) / 255);
 }
 
-fn colorBlendWithBlack(color: ray.struct_Color, opacity: u8) ray.struct_Color {
+fn colorBlendWithBlack(color: ray.Color, opacity: u8) ray.Color {
     return .{
         .r = componentBlendWithBlack(color.r, opacity),
         .g = componentBlendWithBlack(color.g, opacity),
@@ -275,7 +276,7 @@ fn componentBlend(component: u8, blend: u8, amount: u8) u8 {
     return @intCast((@as(u16, component) * @as(u16, amount) + @as(u16, blend) * (255 - @as(u16, amount))) / 255);
 }
 
-fn colorBlend(color: ray.struct_Color, blend: ray.struct_Color, amount: u8) ray.struct_Color {
+fn colorBlend(color: ray.Color, blend: ray.Color, amount: u8) ray.Color {
     return .{
         .r = componentBlend(color.r, blend.r, amount),
         .g = componentBlend(color.g, blend.g, amount),
@@ -289,13 +290,13 @@ const Particle = struct {
     size: f32,
     velocity: Vector2 = ray.Vector2Zero(),
     decay_speed: f32 = 0.1,
-    color: ray.struct_Color = ray.WHITE,
+    color: ray.Color = ray.WHITE,
     projectile: ?*Projectile = null,
 
     const MIN_SIZE: f32 = 2;
     const MAX_SIZE: f32 = 5;
 
-    fn initDebris(position: Vector2, velocity_x: f32, color: ray.struct_Color) @This() {
+    fn initDebris(position: Vector2, velocity_x: f32, color: ray.Color) @This() {
         const flip: f32 = if (std.Random.boolean(std.crypto.random)) -1 else 1;
         const random = std.Random.float(std.crypto.random, f32); // [0, 1)
         const size = MIN_SIZE + (MAX_SIZE - MIN_SIZE) * random;
@@ -397,7 +398,7 @@ pub fn main() !void {
             defer ray.EndDrawing();
 
             ray.ClearBackground(ray.BLACK);
-            // ray.DrawFPS(10, 10);
+            // ray.DrawFPS(10, HEIGHT - 20);
 
             if (game_state == .Start) {
                 try drawStart();

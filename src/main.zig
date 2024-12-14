@@ -26,8 +26,8 @@ const allocator = gpa.allocator();
 var projectiles: ArrayList(Projectile) = undefined;
 var particles: ArrayList(Particle) = undefined;
 
-var player1 = Player.player1();
-var player2 = Player.player2();
+var player1 = Player.init_player_1();
+var player2 = Player.init_player_2();
 
 const Side = enum {
     Left,
@@ -52,7 +52,7 @@ const Player = struct {
     life: f32 = 100,
     side: Side,
 
-    fn player1() Player {
+    fn init_player_1() Player {
         return .{
             .rectangle = .{
                 .x = 5.0,
@@ -65,7 +65,7 @@ const Player = struct {
         };
     }
 
-    fn player2() Player {
+    fn init_player_2() Player {
         return .{
             .rectangle = .{
                 .x = WIDTH - 5.0 - PADDLE_WIDTH,
@@ -166,7 +166,7 @@ const Projectile = struct {
                 .x = (PADDLE_WIDTH + player.charge + 10) * position_multiplier,
             }),
             .radius = player.charge,
-            .velocity = ray.Vector2Scale(player.direction, calculateVelocity(player.charge)),
+            .velocity = ray.Vector2Scale(player.direction, calculate_velocity(player.charge)),
             .player = player,
             .tail = ArrayList(Particle).init(allocator),
         };
@@ -177,7 +177,7 @@ const Projectile = struct {
         self.tail.deinit();
     }
 
-    fn calculateVelocity(size: f32) f32 {
+    fn calculate_velocity(size: f32) f32 {
         return ray.Remap(size, MIN_SIZE, MAX_SIZE, MAX_VELOCITY, MIN_VELOCITY);
     }
 
@@ -209,19 +209,19 @@ const Projectile = struct {
         }
     }
 
-    fn checkProjectileCollision(self: *@This(), target: *@This()) bool {
+    fn check_projectile_collision(self: *@This(), target: *@This()) bool {
         const distance = ray.Vector2Distance(self.position, target.position);
         return distance <= (self.radius + target.radius);
     }
 
-    fn checkPlayerCollision(self: *@This(), player: *Player) void {
+    fn check_player_collision(self: *@This(), player: *Player) void {
         if (ray.CheckCollisionCircleRec(self.position, self.radius, player.rectangle)) {
             self.velocity.x *= -1;
             self.player = player;
         }
     }
 
-    fn checkOutOfBounds(self: *@This()) bool {
+    fn check_out_of_bounds(self: *@This()) bool {
         if (self.position.y - self.radius <= 0 or self.position.y + self.radius >= HEIGHT) {
             self.velocity.y *= -1;
         }
@@ -233,7 +233,7 @@ const Projectile = struct {
         return false;
     }
 
-    fn computeGravity(self: *@This(), target: *@This()) void {
+    fn compute_gravity(self: *@This(), target: *@This()) void {
         const distance = ray.Vector2Distance(self.position, target.position);
         const gravity = (G * self.radius * self.radius * target.radius * target.radius) / (distance * distance);
 
@@ -259,28 +259,15 @@ const Projectile = struct {
     }
 };
 
-fn componentBlendWithBlack(component: u8, opacity: u8) u8 {
-    return @intCast(@as(u16, component) * @as(u16, opacity) / 255);
-}
-
-fn colorBlendWithBlack(color: ray.Color, opacity: u8) ray.Color {
-    return .{
-        .r = componentBlendWithBlack(color.r, opacity),
-        .g = componentBlendWithBlack(color.g, opacity),
-        .b = componentBlendWithBlack(color.b, opacity),
-        .a = color.a,
-    };
-}
-
-fn componentBlend(component: u8, blend: u8, amount: u8) u8 {
+fn component_blend(component: u8, blend: u8, amount: u8) u8 {
     return @intCast((@as(u16, component) * @as(u16, amount) + @as(u16, blend) * (255 - @as(u16, amount))) / 255);
 }
 
-fn colorBlend(color: ray.Color, blend: ray.Color, amount: u8) ray.Color {
+fn color_blend(color: ray.Color, blend: ray.Color, amount: u8) ray.Color {
     return .{
-        .r = componentBlend(color.r, blend.r, amount),
-        .g = componentBlend(color.g, blend.g, amount),
-        .b = componentBlend(color.b, blend.b, amount),
+        .r = component_blend(color.r, blend.r, amount),
+        .g = component_blend(color.g, blend.g, amount),
+        .b = component_blend(color.b, blend.b, amount),
         .a = color.a,
     };
 }
@@ -296,7 +283,7 @@ const Particle = struct {
     const MIN_SIZE: f32 = 2;
     const MAX_SIZE: f32 = 5;
 
-    fn initDebris(position: Vector2, velocity_x: f32, color: ray.Color) @This() {
+    fn init_debris(position: Vector2, velocity_x: f32, color: ray.Color) @This() {
         const flip: f32 = if (std.Random.boolean(std.crypto.random)) -1 else 1;
         const random = std.Random.float(std.crypto.random, f32); // [0, 1)
         const size = MIN_SIZE + (MAX_SIZE - MIN_SIZE) * random;
@@ -314,7 +301,7 @@ const Particle = struct {
         };
     }
 
-    fn initTrail(projectile: *Projectile) @This() {
+    fn init_trail(projectile: *Projectile) @This() {
         const min_tail_length: f32 = 0;
         const max_tail_length: f32 = 200;
         const min_speed: f32 = 0;
@@ -334,7 +321,7 @@ const Particle = struct {
             @as(f32, 40),
         ), 40, 200));
 
-        const color = colorBlend(projectile.player.color, ray.BLACK, blend_amount);
+        const color = color_blend(projectile.player.color, ray.BLACK, blend_amount);
 
         return .{
             .position = projectile.position,
@@ -384,10 +371,10 @@ pub fn main() !void {
 
             switch (game_state) {
                 .Start => {
-                    try updateStart();
+                    try update_start();
                 },
                 .Loop => {
-                    try updateLoop();
+                    try update_loop();
                 },
             }
         }
@@ -401,20 +388,20 @@ pub fn main() !void {
             // ray.DrawFPS(10, HEIGHT - 20);
 
             if (game_state == .Start) {
-                try drawStart();
+                try draw_start();
             }
-            try drawLoop();
+            try draw_loop();
         }
     }
 }
 
-fn updateStart() !void {
+fn update_start() !void {
     if (countdown <= 0) {
         game_state = .Loop;
     }
 }
 
-fn drawStart() !void {
+fn draw_start() !void {
     const font_size: c_int = 60;
 
     {
@@ -433,7 +420,7 @@ fn drawStart() !void {
     }
 }
 
-fn updateLoop() !void {
+fn update_loop() !void {
     if (ray.IsKeyDown(ray.KEY_DOWN)) {
         player1.move(.{ .y = 1 * PLAYER_SPEED });
     } else if (ray.IsKeyDown(ray.KEY_UP)) {
@@ -448,30 +435,30 @@ fn updateLoop() !void {
         for (projectiles.items, 0..) |*target, j| {
             if (i >= j) continue;
 
-            if (projectile.checkProjectileCollision(target)) {
+            if (projectile.check_projectile_collision(target)) {
                 if (projectile.radius == target.radius) {
                     projectile.to_delete = true;
                     target.to_delete = true;
 
-                    try createDebris(projectile);
-                    try createDebris(target);
+                    try create_debris(projectile);
+                    try create_debris(target);
                 }
                 if (projectile.radius > target.radius) {
                     target.to_delete = true;
-                    try createDebris(target);
+                    try create_debris(target);
                     projectile.consume(target);
                 } else {
                     projectile.to_delete = true;
-                    try createDebris(projectile);
+                    try create_debris(projectile);
                     target.consume(projectile);
                 }
                 continue;
             }
 
-            projectile.computeGravity(target);
+            projectile.compute_gravity(target);
         }
 
-        if (projectile.checkOutOfBounds()) {
+        if (projectile.check_out_of_bounds()) {
             projectile.to_delete = true;
 
             if (projectile.position.x <= WIDTH / 2) {
@@ -480,18 +467,18 @@ fn updateLoop() !void {
                 player2.life -= @ceil(projectile.radius);
             }
 
-            try createDebris(projectile);
+            try create_debris(projectile);
 
             continue;
         }
 
-        projectile.checkPlayerCollision(&player1);
-        projectile.checkPlayerCollision(&player2);
+        projectile.check_player_collision(&player1);
+        projectile.check_player_collision(&player2);
 
         projectile.update();
 
         if (!projectile.to_delete) {
-            try projectile.tail.append(Particle.initTrail(projectile));
+            try projectile.tail.append(Particle.init_trail(projectile));
         }
     }
 
@@ -526,7 +513,7 @@ fn updateLoop() !void {
     player2.update();
 }
 
-fn drawLoop() !void {
+fn draw_loop() !void {
     for (particles.items) |particle| {
         particle.draw();
     }
@@ -539,11 +526,11 @@ fn drawLoop() !void {
     try player2.draw();
 }
 
-fn createDebris(projectile: *Projectile) !void {
+fn create_debris(projectile: *Projectile) !void {
     const particle_count = std.Random.intRangeAtMost(std.crypto.random, usize, 5, 10);
 
     for (0..particle_count) |_| {
-        try particles.append(Particle.initDebris(
+        try particles.append(Particle.init_debris(
             projectile.position,
             projectile.velocity.x,
             projectile.player.color,

@@ -1,9 +1,8 @@
 const std = @import("std");
-
 const ray = @import("raylib.zig");
 const root = @import("main.zig");
-const Player = @import("Player.zig").Player;
-const Particle = @import("Particle.zig").Particle;
+const Player = @import("player.zig").Player;
+const Particle = @import("particle.zig").Particle;
 
 const WIDTH = root.WIDTH;
 const HEIGHT = root.HEIGHT;

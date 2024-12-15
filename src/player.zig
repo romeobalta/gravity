@@ -1,8 +1,8 @@
 const std = @import("std");
 const ray = @import("raylib.zig");
-const Projectile = @import("Projectile.zig").Projectile;
-
 const root = @import("main.zig");
+const Projectile = @import("projectile.zig").Projectile;
+
 const WIDTH = root.WIDTH;
 const HEIGHT = root.HEIGHT;
 const TIME_PER_UPDATE = root.TIME_PER_UPDATE;

@@ -1,9 +1,8 @@
 const std = @import("std");
 const ray = @import("raylib.zig");
-
 const Particle = @import("particle.zig").Particle;
-const Player = @import("Player.zig").Player;
-const Projectile = @import("Projectile.zig").Projectile;
+const Player = @import("player.zig").Player;
+const Projectile = @import("projectile.zig").Projectile;
 
 const ArrayList = std.ArrayList;
 const Vector2 = ray.struct_Vector2;

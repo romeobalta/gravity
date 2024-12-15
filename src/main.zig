@@ -1,7 +1,7 @@
 const std = @import("std");
 const ray = @import("raylib.zig");
 
-const Particle = @import("Particle.zig").Particle;
+const Particle = @import("particle.zig").Particle;
 const Player = @import("Player.zig").Player;
 const Projectile = @import("Projectile.zig").Projectile;
 

@@ -103,6 +103,8 @@ fn draw_start() !void {
     {
         const remaining = @floor(countdown);
         const string = try std.fmt.allocPrintZ(allocator, "{d}", .{remaining});
+        defer allocator.free(string);
+
         const string_width = @divExact(ray.MeasureText(string, font_size), 2);
         const position_x: c_int = @as(c_int, WIDTH / 2) - (string_width);
         ray.DrawText(string, position_x, 150, font_size, ray.WHITE);

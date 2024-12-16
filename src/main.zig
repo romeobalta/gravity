@@ -9,8 +9,8 @@ const Vector2 = ray.struct_Vector2;
 const Color = ray.struct_Color;
 const Rectangle = ray.struct_Rectangle;
 
-pub const WIDTH: f32 = 800;
-pub const HEIGHT: f32 = 600;
+pub const WIDTH: f32 = 1600;
+pub const HEIGHT: f32 = 800;
 
 pub const UPDATES_PER_SECOND: f32 = 60;
 pub const TIME_PER_UPDATE: f32 = 1.0 / UPDATES_PER_SECOND;

@@ -26,7 +26,7 @@ pub const Player = struct {
     side: Side,
 
     pub const PADDLE_WIDTH: f32 = 10;
-    pub const PADDLE_HEIGHT: f32 = 60;
+    pub const PADDLE_HEIGHT: f32 = 100;
 
     pub const PLAYER_SPEED: f32 = 10;
     pub const PLAYER_COOLDOWN: f32 = 0.5;

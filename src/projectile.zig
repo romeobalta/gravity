@@ -25,7 +25,7 @@ pub const Projectile = struct {
     pub const MAX_SIZE: f32 = 20.0;
 
     pub const MIN_VELOCITY: f32 = 1.0;
-    pub const MAX_VELOCITY: f32 = 7.0;
+    pub const MAX_VELOCITY: f32 = 8.0;
 
     pub const MAX_DISTANCE_GRAVITY: f32 = 100;
 
@@ -113,12 +113,15 @@ pub const Projectile = struct {
 
     pub fn compute_gravity(self: *@This(), target: *@This()) void {
         const distance = ray.Vector2Distance(self.position, target.position);
-        const gravity = (G * self.radius * self.radius * target.radius * target.radius) / (distance * distance);
+        const gravity = (G * self.radius * target.radius * 50) / (distance * distance);
 
         const direction = ray.Vector2Normalize(ray.Vector2Subtract(self.position, target.position));
 
-        self.forces = ray.Vector2Add(self.forces, ray.Vector2Negate(ray.Vector2Scale(direction, gravity / (self.radius * self.radius))));
-        target.forces = ray.Vector2Add(target.forces, ray.Vector2Scale(direction, gravity / (target.radius * target.radius)));
+        const selfGravity = if (self.radius > target.radius) gravity / (self.radius * 10) else gravity / self.radius;
+        const targetGravity = if (self.radius < target.radius) gravity / (target.radius * 10) else gravity / target.radius;
+
+        self.forces = ray.Vector2Add(self.forces, ray.Vector2Negate(ray.Vector2Scale(direction, selfGravity)));
+        target.forces = ray.Vector2Add(target.forces, ray.Vector2Scale(direction, targetGravity));
     }
 
     pub fn consume(self: *@This(), target: *@This()) void {

@@ -36,6 +36,7 @@ var game_state: GameState = .Loop;
 var countdown: f32 = 3.5;
 
 pub fn main() !void {
+    ray.SetConfigFlags(ray.FLAG_MSAA_4X_HINT);
     ray.InitWindow(WIDTH, HEIGHT, "gravity");
     defer ray.CloseWindow();
 

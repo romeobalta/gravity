@@ -5,9 +5,9 @@ const Player = @import("player.zig").Player;
 const Projectile = @import("projectile.zig").Projectile;
 
 const ArrayList = std.ArrayList;
-const Vector2 = ray.struct_Vector2;
-const Color = ray.struct_Color;
-const Rectangle = ray.struct_Rectangle;
+const Vector2 = ray.Vector2;
+const Color = ray.Color;
+const Rectangle = ray.Rectangle;
 
 pub const WIDTH: f32 = 1600;
 pub const HEIGHT: f32 = 800;
@@ -129,13 +129,18 @@ fn update_loop() !void {
 
             if (projectile.check_projectile_collision(target)) {
                 if (projectile.radius == target.radius) {
-                    projectile.to_delete = true;
-                    target.to_delete = true;
-
-                    try create_debris(projectile);
-                    try create_debris(target);
-                }
-                if (projectile.radius > target.radius) {
+                    const p_velocity_magnitude = ray.Vector2Length(projectile.velocity);
+                    const t_velocity_magnitude = ray.Vector2Length(target.velocity);
+                    if (p_velocity_magnitude > t_velocity_magnitude) {
+                        target.to_delete = true;
+                        try create_debris(target);
+                        projectile.consume(target);
+                    } else {
+                        projectile.to_delete = true;
+                        try create_debris(projectile);
+                        target.consume(projectile);
+                    }
+                } else if (projectile.radius > target.radius) {
                     target.to_delete = true;
                     try create_debris(target);
                     projectile.consume(target);

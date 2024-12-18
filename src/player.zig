@@ -8,8 +8,8 @@ const HEIGHT = root.HEIGHT;
 const TIME_PER_UPDATE = root.TIME_PER_UPDATE;
 
 const ArrayList = std.ArrayList;
-const Rectangle = ray.struct_Rectangle;
-const Vector2 = ray.struct_Vector2;
+const Rectangle = ray.Rectangle;
+const Vector2 = ray.Vector2;
 
 const Side = enum {
     Left,

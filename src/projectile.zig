@@ -9,8 +9,8 @@ const HEIGHT = root.HEIGHT;
 const G = root.G;
 
 const ArrayList = std.ArrayList;
-const Rectangle = ray.struct_Rectangle;
-const Vector2 = ray.struct_Vector2;
+const Rectangle = ray.Rectangle;
+const Vector2 = ray.Vector2;
 
 pub const Projectile = struct {
     position: Vector2 = .{ .x = 0, .y = 0 },
@@ -134,8 +134,8 @@ pub const Projectile = struct {
 
         self.forces = ray.Vector2Add(self.forces, ray.Vector2Scale(target.velocity, impact * impact));
 
-        if (self.radius < MAX_SIZE) {
-            self.radius += target.radius;
-        }
+        // TODO: add extra radius to mass
+        const new_radius = ray.Clamp(self.radius + target.radius, MIN_SIZE, MAX_SIZE);
+        self.radius = new_radius;
     }
 };

@@ -128,7 +128,7 @@ fn update_loop() !void {
             if (i >= j) continue;
 
             if (projectile.check_projectile_collision(target)) {
-                if (projectile.radius == target.radius) {
+                if (projectile.radius + projectile.extra_mass == target.radius + target.extra_mass) {
                     const p_velocity_magnitude = ray.Vector2Length(projectile.velocity);
                     const t_velocity_magnitude = ray.Vector2Length(target.velocity);
                     if (p_velocity_magnitude > t_velocity_magnitude) {
@@ -140,7 +140,7 @@ fn update_loop() !void {
                         try create_debris(projectile);
                         target.consume(projectile);
                     }
-                } else if (projectile.radius > target.radius) {
+                } else if (projectile.radius + projectile.extra_mass > target.radius + target.extra_mass) {
                     target.to_delete = true;
                     try create_debris(target);
                     projectile.consume(target);

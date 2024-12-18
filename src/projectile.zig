@@ -19,6 +19,7 @@ pub const Projectile = struct {
     player: *Player,
     forces: Vector2 = .{ .x = 0, .y = 0 },
     to_delete: bool = false,
+    extra_mass: f32 = 0,
     tail: ArrayList(Particle),
 
     pub const MIN_SIZE: f32 = 5.0;
@@ -113,12 +114,12 @@ pub const Projectile = struct {
 
     pub fn compute_gravity(self: *@This(), target: *@This()) void {
         const distance = ray.Vector2Distance(self.position, target.position);
-        const gravity = (G * self.radius * target.radius * 50) / (distance * distance);
+        const gravity = (G * (self.radius + self.extra_mass) * (target.radius + target.extra_mass) * 50) / (distance * distance);
 
         const direction = ray.Vector2Normalize(ray.Vector2Subtract(self.position, target.position));
 
-        const selfGravity = if (self.radius > target.radius) gravity / (self.radius * 10) else gravity / self.radius;
-        const targetGravity = if (self.radius < target.radius) gravity / (target.radius * 10) else gravity / target.radius;
+        const selfGravity = if (self.radius + self.extra_mass > target.radius + target.extra_mass) gravity / (self.radius * 10) else gravity / (self.radius + self.extra_mass);
+        const targetGravity = if (self.radius + self.extra_mass < target.radius + target.extra_mass) gravity / (target.radius * 10) else gravity / (target.radius + target.extra_mass);
 
         self.forces = ray.Vector2Add(self.forces, ray.Vector2Negate(ray.Vector2Scale(direction, selfGravity)));
         target.forces = ray.Vector2Add(target.forces, ray.Vector2Scale(direction, targetGravity));
@@ -134,8 +135,8 @@ pub const Projectile = struct {
 
         self.forces = ray.Vector2Add(self.forces, ray.Vector2Scale(target.velocity, impact * impact));
 
-        // TODO: add extra radius to mass
-        const new_radius = ray.Clamp(self.radius + target.radius, MIN_SIZE, MAX_SIZE);
-        self.radius = new_radius;
+        const new_radius = self.radius + target.radius;
+        self.extra_mass = ray.Clamp(new_radius - MAX_SIZE, 0, 1000);
+        self.radius = ray.Clamp(new_radius, MIN_SIZE, MAX_SIZE);
     }
 };

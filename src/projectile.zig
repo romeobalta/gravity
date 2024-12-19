@@ -60,7 +60,26 @@ pub const Projectile = struct {
         return ray.Remap(size, MIN_SIZE, MAX_SIZE, MAX_VELOCITY, MIN_VELOCITY);
     }
 
+    fn draw_glow(self: *const @This()) void {
+        const glow_size: f32 = ray.floorf(ray.Remap(self.extra_mass, 0, 500, 0, 100));
+        if (glow_size >= 1) {
+            const glow_target_opacity: f32 = 0.8;
+            const glow_layers: f32 = glow_size / 2;
+            var i: f32 = glow_layers - 1;
+            while (i >= 1) : (i -= 1) {
+                const alpha: f32 = glow_target_opacity / glow_layers;
+                const radius: f32 = self.radius + (glow_layers - i) * 2;
+
+                const color = ray.ColorAlpha(self.player.color, alpha);
+
+                ray.DrawCircleV(self.position, radius, color);
+            }
+        }
+    }
+
     pub fn draw(self: *const @This()) void {
+        self.draw_glow();
+
         for (self.tail.items) |particle| {
             particle.draw();
         }
@@ -135,7 +154,7 @@ pub const Projectile = struct {
 
         self.forces = ray.Vector2Add(self.forces, ray.Vector2Scale(target.velocity, impact * impact));
 
-        const new_radius = self.radius + target.radius;
+        const new_radius = self.radius + target.radius + self.extra_mass + target.extra_mass;
         self.extra_mass = ray.Clamp(new_radius - MAX_SIZE, 0, 1000);
         self.radius = ray.Clamp(new_radius, MIN_SIZE, MAX_SIZE);
     }

@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const ray = @import("raylib.zig");
 const Particle = @import("particle.zig").Particle;
 const Player = @import("player.zig").Player;
@@ -29,10 +30,12 @@ var player2 = Player.init_player_2();
 const GameState = enum {
     Start,
     Loop,
+    ServerWait,
+    ClientLoop,
 };
 
 // TODO: .Start
-var game_state: GameState = .Loop;
+var game_state: GameState = .Start;
 var countdown: f32 = 3.5;
 
 pub fn main() !void {
@@ -66,6 +69,12 @@ pub fn main() !void {
                 .Loop => {
                     try update_loop();
                 },
+                .ServerWait => {
+                    try server_wait_loop();
+                },
+                else => {
+                    std.debug.panic("oh no", .{});
+                },
             }
         }
 
@@ -86,15 +95,18 @@ pub fn main() !void {
 }
 
 fn update_start() !void {
-    if (countdown <= 0) {
+    if (ray.IsKeyDown(ray.KEY_S)) {
         game_state = .Loop;
+    } else if (ray.IsKeyDown(ray.KEY_H)) {
+        try server_wait_enter();
+
+        game_state = .ServerWait;
     }
 }
 
 fn draw_start() !void {
-    const font_size: c_int = 60;
-
     {
+        const font_size: c_int = 60;
         const string = "Game is starting";
         const string_width = @divExact(ray.MeasureText(string, font_size), 2);
         const position_x: c_int = @as(c_int, WIDTH / 2) - (string_width);
@@ -102,13 +114,19 @@ fn draw_start() !void {
     }
 
     {
-        const remaining = @floor(countdown);
-        const string = try std.fmt.allocPrintZ(allocator, "{d}", .{remaining});
-        defer allocator.free(string);
-
+        const font_size: c_int = 30;
+        const string = "Press S to start local game";
         const string_width = @divExact(ray.MeasureText(string, font_size), 2);
         const position_x: c_int = @as(c_int, WIDTH / 2) - (string_width);
-        ray.DrawText(string, position_x, 150, font_size, ray.WHITE);
+        ray.DrawText(string, position_x, 170, font_size, ray.WHITE);
+    }
+
+    {
+        const font_size: c_int = 30;
+        const string = "Press H to host game";
+        const string_width = @divTrunc(ray.MeasureText(string, font_size), 2);
+        const position_x: c_int = @as(c_int, WIDTH / 2) - (string_width);
+        ray.DrawText(string, position_x, 210, font_size, ray.WHITE);
     }
 }
 
@@ -232,6 +250,74 @@ fn create_debris(projectile: *Projectile) !void {
             projectile.velocity.x,
             projectile.player.color,
         ));
+    }
+}
+
+const Socket = struct {
+    address: std.net.Address,
+    socket: std.posix.socket_t,
+    is_open: bool = false,
+
+    const Self = @This();
+
+    pub fn init(ip: []const u8, port: u16) !Self {
+        const parsed_address = try std.net.Address.parseIp4(ip, port);
+        const sock = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.DGRAM | std.posix.SOCK.NONBLOCK, 0);
+        try std.posix.bind(sock, &parsed_address.any, parsed_address.getOsSockLen());
+
+        return .{
+            .address = parsed_address,
+            .socket = sock,
+            .is_open = true,
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        if (comptime builtin.target.os.tag == .windows) {
+            std.os.windows.closesocket(self.socket);
+            return;
+        }
+
+        std.posix.close(self.socket);
+        self.is_open = false;
+    }
+
+    pub fn send(self: *const Self, data: []const u8) void {
+        try std.posix.sendto(self.socket, data, 0, @ptrCast(&self.address), self.address.getOsSockLen());
+    }
+
+    pub fn receive(self: *const Self) void {
+        var buffer: [1024]u8 = undefined;
+        var from: std.net.Address = undefined;
+        var from_length: u32 = 0;
+
+        while (true) {
+            const received_bytes = std.posix.recvfrom(self.socket, buffer[0..], 0, @ptrCast(&from), &from_length) catch 0;
+
+            if (received_bytes <= 0) {
+                break;
+            }
+
+            std.debug.print("NET: Received {d}\n", .{received_bytes});
+
+            // TODO: do something with the data, build a packet type and return
+        }
+    }
+};
+
+var socket: Socket = undefined;
+
+fn server_wait_enter() !void {
+    socket = try Socket.init("127.0.0.1", 42069);
+}
+
+fn server_wait_loop() !void {
+    if (socket.is_open) {
+        socket.receive();
+    } else {
+        socket.deinit();
+        std.debug.print("NET: Socket is closed, going back to lobby \n", .{});
+        game_state = .Start;
     }
 }
 

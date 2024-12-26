@@ -45,7 +45,13 @@ pub const Projectile = struct {
                 .x = (Player.PADDLE_WIDTH + player.charge + 10) * position_multiplier,
             }),
             .radius = player.charge,
-            .velocity = ray.Vector2Scale(player.direction, calculate_velocity(player.charge)),
+            .velocity = ray.Vector2Scale(
+                switch (player.side) {
+                    .Left => .{ .x = 1, .y = 0 },
+                    .Right => .{ .x = -1, .y = 0 },
+                },
+                calculate_velocity(player.charge),
+            ),
             .player = player,
             .tail = ArrayList(Particle).init(allocator),
         };

@@ -1,0 +1,200 @@
+const std = @import("std");
+const builtin = @import("builtin");
+const ray = @import("raylib.zig");
+
+const Vector2 = ray.Vector2;
+
+pub const Socket = struct {
+    address: std.net.Address,
+    socket: std.posix.socket_t,
+    is_open: bool = false,
+
+    const Self = @This();
+
+    pub fn init(ip: []const u8, port: u16) !Self {
+        const parsed_address = try std.net.Address.parseIp4(ip, port);
+        const sock = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.DGRAM | std.posix.SOCK.NONBLOCK, 0);
+        try std.posix.bind(sock, &parsed_address.any, parsed_address.getOsSockLen());
+
+        return .{
+            .address = parsed_address,
+            .socket = sock,
+            .is_open = true,
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        if (comptime builtin.target.os.tag == .windows) {
+            std.os.windows.closesocket(self.socket);
+            return;
+        }
+
+        std.posix.close(self.socket);
+        self.is_open = false;
+    }
+
+    pub fn send(self: *const Self, data: []const u8) void {
+        try std.posix.sendto(self.socket, data, 0, @ptrCast(&self.address), self.address.getOsSockLen());
+    }
+
+    pub fn receive(self: *const Self) void {
+        var buffer: [1024]u8 = undefined;
+        var from: std.net.Address = undefined;
+        var from_length: u32 = 0;
+
+        while (true) {
+            const received_bytes = std.posix.recvfrom(self.socket, buffer[0..], 0, @ptrCast(&from), &from_length) catch 0;
+
+            if (received_bytes <= 0) {
+                break;
+            }
+
+            std.debug.print("NET: Received {d}\n", .{received_bytes});
+
+            // TODO: do something with the data, build a packet type and return
+        }
+    }
+};
+
+const PACKAGE_SIZE =
+    // packet id
+    @sizeOf(u32) +
+    // player state
+    @sizeOf(PlayerState) +
+    // projectile count
+    @sizeOf(u8) +
+    // projectiles
+    @sizeOf(ProjectileState) * MAX_PROJECTILES;
+pub const ClientPackage = extern struct {
+    packet_id: u32,
+    player_state: PlayerState,
+    board_state: BoardState,
+
+    const Self = @This();
+
+    pub fn init(packet_id: u32) Self {
+        return .{
+            .packet_id = packet_id,
+        };
+    }
+
+    pub fn encode(self: *const Self) [PACKAGE_SIZE]u8 {
+        var buffer: [PACKAGE_SIZE]u8 = std.mem.zeroes([PACKAGE_SIZE]u8);
+
+        std.mem.writePackedInt(u32, buffer[0..], 0, @bitCast(self.packet_id), .little);
+
+        self.player_state.encode(buffer[0..], @bitOffsetOf(Self, "player_state"));
+        self.board_state.encode(buffer[0..], @bitOffsetOf(Self, "board_state"));
+
+        return buffer;
+    }
+
+    pub fn decode(self: *Self, data: []const u8) void {
+        _ = self;
+        _ = data;
+
+        // var writer = std.io.fixedBufferStream(data).writer();
+    }
+};
+
+const PlayerState = extern struct {
+    position_x: f32 = 0.0,
+    position_y: f32 = 0.0,
+    charge: f32 = 0.0,
+
+    const Self = @This();
+
+    pub fn encode(self: *const Self, buffer: []u8, offset: usize) void {
+        std.mem.writePackedInt(
+            u32,
+            buffer,
+            offset + @bitOffsetOf(Self, "position_x"),
+            @bitCast(self.position_x),
+            .little,
+        );
+        std.mem.writePackedInt(
+            u32,
+            buffer,
+            offset + @bitOffsetOf(Self, "position_y"),
+            @bitCast(self.position_y),
+            .little,
+        );
+        std.mem.writePackedInt(
+            u32,
+            buffer,
+            offset + @bitOffsetOf(Self, "charge"),
+            @bitCast(self.charge),
+            .little,
+        );
+    }
+};
+
+const MAX_PROJECTILES = 50;
+pub const BoardState = extern struct {
+    projectile_count: u8,
+    projectiles: [MAX_PROJECTILES]ProjectileState = std.mem.zeroes([MAX_PROJECTILES]ProjectileState),
+
+    const Self = @This();
+
+    pub fn init(count: u8) Self {
+        return .{
+            .projectile_count = count,
+        };
+    }
+
+    pub fn encode(self: *const Self, buffer: []u8, offset: usize) void {
+        std.mem.writePackedInt(
+            u8,
+            @ptrCast(buffer[0..]),
+            offset + @bitOffsetOf(Self, "projectile_count"),
+            self.projectile_count,
+            .little,
+        );
+
+        const actual_bit_offset = offset + @bitSizeOf(@TypeOf(self.projectile_count));
+        for (self.projectiles, 0..) |projectile, index| {
+            const local_offset = actual_bit_offset + index * @bitSizeOf(ProjectileState);
+            projectile.encode(buffer[0..], local_offset);
+        }
+    }
+};
+
+pub const ProjectileState = extern struct {
+    position_x: f32 = 0.0,
+    position_y: f32 = 0.0,
+    velocity_x: f32 = 0.0,
+    velocity_y: f32 = 0.0,
+
+    const Self = @This();
+
+    pub fn encode(self: *const Self, buffer: []u8, offset: usize) void {
+        std.mem.writePackedInt(
+            u32,
+            buffer,
+            offset + @bitOffsetOf(Self, "position_x"),
+            @bitCast(self.position_x),
+            .little,
+        );
+        std.mem.writePackedInt(
+            u32,
+            buffer,
+            offset + @bitOffsetOf(Self, "position_y"),
+            @bitCast(self.position_y),
+            .little,
+        );
+        std.mem.writePackedInt(
+            u32,
+            buffer,
+            offset + @bitOffsetOf(Self, "velocity_x"),
+            @bitCast(self.velocity_x),
+            .little,
+        );
+        std.mem.writePackedInt(
+            u32,
+            buffer,
+            offset + @bitOffsetOf(Self, "velocity_y"),
+            @bitCast(self.velocity_y),
+            .little,
+        );
+    }
+};

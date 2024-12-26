@@ -21,7 +21,6 @@ pub const Player = struct {
     color: ray.Color,
     charge: f32 = 0.0,
     cooldown: f32 = PLAYER_COOLDOWN,
-    direction: Vector2 = .{ .x = 1, .y = 0 },
     life: f32 = 100,
     side: Side,
 

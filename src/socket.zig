@@ -23,6 +23,18 @@ pub const Socket = struct {
         };
     }
 
+    pub fn connect(ip: []const u8, port: u16) !Self {
+        const parsed_address = try std.net.Address.parseIp4(ip, port);
+        const sock = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.DGRAM | std.posix.SOCK.NONBLOCK, 0);
+        // try std.posix.connect(sock, &parsed_address.any, parsed_address.getOsSockLen());
+
+        return .{
+            .address = parsed_address,
+            .socket = sock,
+            .is_open = true,
+        };
+    }
+
     pub fn deinit(self: *Self) void {
         if (comptime builtin.target.os.tag == .windows) {
             std.os.windows.closesocket(self.socket);
@@ -33,11 +45,13 @@ pub const Socket = struct {
         self.is_open = false;
     }
 
-    pub fn send(self: *const Self, data: []const u8) void {
-        try std.posix.sendto(self.socket, data, 0, @ptrCast(&self.address), self.address.getOsSockLen());
+    pub fn send(self: *const Self, package: Package) !void {
+        const data = package.encode();
+        const sent = try std.posix.sendto(self.socket, data[0..], 0, @ptrCast(&self.address), self.address.getOsSockLen());
+        std.debug.print("Sent: {d}\n", .{sent});
     }
 
-    pub fn receive(self: *const Self) void {
+    pub fn receive(self: *const Self) ?Package {
         var buffer: [1024]u8 = undefined;
         var from: std.net.Address = undefined;
         var from_length: u32 = 0;
@@ -51,8 +65,14 @@ pub const Socket = struct {
 
             std.debug.print("NET: Received {d}\n", .{received_bytes});
 
-            // TODO: do something with the data, build a packet type and return
+            if (received_bytes == PACKAGE_SIZE) {
+                var package = Package{};
+                package.decode(buffer[0..]);
+                return package;
+            }
         }
+
+        return null;
     }
 };
 
@@ -66,7 +86,7 @@ const PACKAGE_SIZE =
     // projectiles
     @sizeOf(ProjectileState) * MAX_PROJECTILES;
 
-pub const ClientPackage = extern struct {
+pub const Package = extern struct {
     packet_id: u32 = 0,
     player_state: PlayerState = .{},
     board_state: BoardState = .{},

@@ -4,7 +4,7 @@ const Particle = @import("particle.zig").Particle;
 const Player = @import("player.zig").Player;
 const Projectile = @import("projectile.zig").Projectile;
 const Socket = @import("socket.zig").Socket;
-const ClientPackage = @import("socket.zig").ClientPackage;
+const Package = @import("socket.zig").Package;
 const ProjectileState = @import("socket.zig").ProjectileState;
 const BoardState = @import("socket.zig").BoardState;
 
@@ -33,8 +33,8 @@ var player2 = Player.init_player_2();
 const GameState = enum {
     Menu,
     Loop,
-    ServerWait,
-    ClientLoop,
+    ServerLogic,
+    ClientLogic,
 };
 
 // TODO: .Menu
@@ -77,12 +77,15 @@ pub fn main() !void {
                 .Loop => {
                     try loop_update();
                 },
-                .ServerWait => {
-                    try server_wait_loop();
+                .ServerLogic => {
+                    try server_logic_loop();
                 },
-                else => {
-                    std.debug.panic("oh no", .{});
+                .ClientLogic => {
+                    try client_logic_loop();
                 },
+                // else => {
+                //     std.debug.panic("oh no", .{});
+                // },
             }
         }
 
@@ -115,11 +118,13 @@ fn menu_update() !void {
                 game_state = .Loop;
             },
             1 => {
-                try server_wait_enter();
-
-                game_state = .ServerWait;
+                game_state = .ServerLogic;
+                try server_logic_enter();
             },
-            2 => {},
+            2 => {
+                game_state = .ClientLogic;
+                try client_logic_enter();
+            },
             else => {},
         }
     }
@@ -290,13 +295,16 @@ fn create_debris(projectile: *Projectile) !void {
     }
 }
 
-fn server_wait_enter() !void {
+fn server_logic_enter() !void {
     socket = try Socket.init("127.0.0.1", 42069);
 }
 
-fn server_wait_loop() !void {
+fn server_logic_loop() !void {
     if (socket.is_open) {
-        socket.receive();
+        const data = socket.receive();
+        if (data) |package| {
+            std.debug.print("Received {any}\n", .{package});
+        }
     } else {
         socket.deinit();
         std.debug.print("NET: Socket is closed, going back to lobby \n", .{});
@@ -304,8 +312,41 @@ fn server_wait_loop() !void {
     }
 }
 
+fn client_logic_enter() !void {
+    socket = try Socket.connect("127.0.0.1", 42069);
+
+    var client_package = Package{
+        .packet_id = 1,
+        .player_state = .{
+            .position_x = 10,
+            .position_y = 10,
+            .charge = 5,
+        },
+        .board_state = BoardState.init(50),
+    };
+
+    client_package.board_state.projectiles[49] = .{
+        .position_x = 1,
+        .position_y = 1,
+        .velocity_x = 10,
+        .velocity_y = 10,
+    };
+
+    try socket.send(client_package);
+}
+
+fn client_logic_loop() !void {
+    // if (socket.is_open) {
+    //     socket.receive();
+    // } else {
+    //     socket.deinit();
+    //     std.debug.print("NET: Socket is closed, going back to lobby \n", .{});
+    //     game_state = .Menu;
+    // }
+}
+
 test "simple test" {
-    var client_package = ClientPackage{
+    var client_package = Package{
         .packet_id = 1,
         .player_state = .{
             .position_x = 10,
@@ -324,7 +365,7 @@ test "simple test" {
 
     const encoded_package = client_package.encode();
 
-    var decoded_package = ClientPackage{};
+    var decoded_package = Package{};
     decoded_package.decode(encoded_package[0..]);
 
     std.debug.assert(decoded_package.packet_id == client_package.packet_id);

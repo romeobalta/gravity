@@ -299,11 +299,24 @@ fn server_logic_enter() !void {
     socket = try Socket.init("127.0.0.1", 42069);
 }
 
+var sent = false;
 fn server_logic_loop() !void {
     if (socket.is_open) {
         const data = socket.receive();
         if (data) |package| {
             std.debug.print("Received {any}\n", .{package});
+
+            const server_package = Package{
+                .packet_id = 2,
+                .player_state = .{
+                    .position_x = 10,
+                    .position_y = 10,
+                    .charge = 5,
+                },
+                .board_state = BoardState.init(50),
+            };
+
+            try socket.send(server_package);
         }
     } else {
         socket.deinit();
@@ -315,7 +328,7 @@ fn server_logic_loop() !void {
 fn client_logic_enter() !void {
     socket = try Socket.connect("127.0.0.1", 42069);
 
-    var client_package = Package{
+    const client_package = Package{
         .packet_id = 1,
         .player_state = .{
             .position_x = 10,
@@ -325,24 +338,20 @@ fn client_logic_enter() !void {
         .board_state = BoardState.init(50),
     };
 
-    client_package.board_state.projectiles[49] = .{
-        .position_x = 1,
-        .position_y = 1,
-        .velocity_x = 10,
-        .velocity_y = 10,
-    };
-
     try socket.send(client_package);
 }
 
 fn client_logic_loop() !void {
-    // if (socket.is_open) {
-    //     socket.receive();
-    // } else {
-    //     socket.deinit();
-    //     std.debug.print("NET: Socket is closed, going back to lobby \n", .{});
-    //     game_state = .Menu;
-    // }
+    if (socket.is_open) {
+        const data = socket.receive();
+        if (data) |package| {
+            std.debug.print("Received {any}\n", .{package});
+        }
+    } else {
+        socket.deinit();
+        std.debug.print("NET: Socket is closed, going back to lobby \n", .{});
+        game_state = .Menu;
+    }
 }
 
 test "simple test" {

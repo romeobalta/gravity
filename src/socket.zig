@@ -5,31 +5,33 @@ const ray = @import("raylib.zig");
 const Vector2 = ray.Vector2;
 
 pub const Socket = struct {
-    address: std.net.Address,
+    local_address: std.net.Address = undefined,
+    remote_address: std.net.Address = undefined,
     socket: std.posix.socket_t,
     is_open: bool = false,
+    is_server: bool = false,
 
     const Self = @This();
 
     pub fn init(ip: []const u8, port: u16) !Self {
         const parsed_address = try std.net.Address.parseIp4(ip, port);
         const sock = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.DGRAM | std.posix.SOCK.NONBLOCK, 0);
-        try std.posix.bind(sock, &parsed_address.any, parsed_address.getOsSockLen());
+        try std.posix.bind(sock, @ptrCast(&parsed_address), parsed_address.getOsSockLen());
 
         return .{
-            .address = parsed_address,
+            .local_address = parsed_address,
             .socket = sock,
             .is_open = true,
+            .is_server = true,
         };
     }
 
     pub fn connect(ip: []const u8, port: u16) !Self {
         const parsed_address = try std.net.Address.parseIp4(ip, port);
         const sock = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.DGRAM | std.posix.SOCK.NONBLOCK, 0);
-        // try std.posix.connect(sock, &parsed_address.any, parsed_address.getOsSockLen());
 
         return .{
-            .address = parsed_address,
+            .remote_address = parsed_address,
             .socket = sock,
             .is_open = true,
         };
@@ -47,25 +49,32 @@ pub const Socket = struct {
 
     pub fn send(self: *const Self, package: Package) !void {
         const data = package.encode();
-        const sent = try std.posix.sendto(self.socket, data[0..], 0, @ptrCast(&self.address), self.address.getOsSockLen());
+        const sent = try std.posix.sendto(
+            self.socket,
+            data[0..],
+            0,
+            @ptrCast(&self.remote_address),
+            self.remote_address.getOsSockLen(),
+        );
         std.debug.print("Sent: {d}\n", .{sent});
     }
 
-    pub fn receive(self: *const Self) ?Package {
+    pub fn receive(self: *Self) ?Package {
         var buffer: [1024]u8 = undefined;
         var from: std.net.Address = undefined;
-        var from_length: u32 = 0;
+        var from_length: u32 = @sizeOf(@TypeOf(from.in6));
 
         while (true) {
-            const received_bytes = std.posix.recvfrom(self.socket, buffer[0..], 0, @ptrCast(&from), &from_length) catch 0;
+            const received = std.posix.recvfrom(self.socket, buffer[0..], 0, @ptrCast(&from), &from_length) catch 0;
 
-            if (received_bytes <= 0) {
+            if (received <= 0) {
                 break;
             }
 
-            std.debug.print("NET: Received {d}\n", .{received_bytes});
+            std.debug.print("NET: Received {d}\n", .{received});
 
-            if (received_bytes == PACKAGE_SIZE) {
+            if (received == PACKAGE_SIZE) {
+                std.mem.copyForwards(std.net.Address, (&self.remote_address)[0..1], (&from)[0..1]);
                 var package = Package{};
                 package.decode(buffer[0..]);
                 return package;

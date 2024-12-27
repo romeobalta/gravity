@@ -65,10 +65,11 @@ const PACKAGE_SIZE =
     @sizeOf(u8) +
     // projectiles
     @sizeOf(ProjectileState) * MAX_PROJECTILES;
+
 pub const ClientPackage = extern struct {
-    packet_id: u32,
-    player_state: PlayerState,
-    board_state: BoardState,
+    packet_id: u32 = 0,
+    player_state: PlayerState = .{},
+    board_state: BoardState = .{},
 
     const Self = @This();
 
@@ -90,10 +91,9 @@ pub const ClientPackage = extern struct {
     }
 
     pub fn decode(self: *Self, data: []const u8) void {
-        _ = self;
-        _ = data;
-
-        // var writer = std.io.fixedBufferStream(data).writer();
+        self.packet_id = std.mem.readPackedInt(u32, data[0..], 0, .little);
+        self.player_state.decode(data, @bitOffsetOf(Self, "player_state"));
+        self.board_state.decode(data, @bitOffsetOf(Self, "board_state"));
     }
 };
 
@@ -127,11 +127,32 @@ const PlayerState = extern struct {
             .little,
         );
     }
+
+    pub fn decode(self: *Self, buffer: []const u8, offset: usize) void {
+        self.position_x = @bitCast(std.mem.readPackedInt(
+            u32,
+            buffer,
+            offset + @bitOffsetOf(Self, "position_x"),
+            .little,
+        ));
+        self.position_y = @bitCast(std.mem.readPackedInt(
+            u32,
+            buffer,
+            offset + @bitOffsetOf(Self, "position_y"),
+            .little,
+        ));
+        self.charge = @bitCast(std.mem.readPackedInt(
+            u32,
+            buffer,
+            offset + @bitOffsetOf(Self, "charge"),
+            .little,
+        ));
+    }
 };
 
 const MAX_PROJECTILES = 50;
 pub const BoardState = extern struct {
-    projectile_count: u8,
+    projectile_count: u8 = 0,
     projectiles: [MAX_PROJECTILES]ProjectileState = std.mem.zeroes([MAX_PROJECTILES]ProjectileState),
 
     const Self = @This();
@@ -155,6 +176,21 @@ pub const BoardState = extern struct {
         for (self.projectiles, 0..) |projectile, index| {
             const local_offset = actual_bit_offset + index * @bitSizeOf(ProjectileState);
             projectile.encode(buffer[0..], local_offset);
+        }
+    }
+
+    pub fn decode(self: *Self, buffer: []const u8, offset: usize) void {
+        self.projectile_count = std.mem.readPackedInt(
+            u8,
+            @ptrCast(buffer[0..]),
+            offset + @bitOffsetOf(Self, "projectile_count"),
+            .little,
+        );
+
+        const actual_bit_offset = offset + @bitSizeOf(@TypeOf(self.projectile_count));
+        for (self.projectiles, 0..) |_, index| {
+            const local_offset = actual_bit_offset + index * @bitSizeOf(ProjectileState);
+            self.projectiles[index] = ProjectileState.decode(buffer, local_offset);
         }
     }
 };
@@ -196,5 +232,39 @@ pub const ProjectileState = extern struct {
             @bitCast(self.velocity_y),
             .little,
         );
+    }
+
+    pub fn decode(buffer: []const u8, offset: usize) Self {
+        const position_x: f32 = @bitCast(std.mem.readPackedInt(
+            u32,
+            buffer,
+            offset + @bitOffsetOf(Self, "position_x"),
+            .little,
+        ));
+        const position_y: f32 = @bitCast(std.mem.readPackedInt(
+            u32,
+            buffer,
+            offset + @bitOffsetOf(Self, "position_y"),
+            .little,
+        ));
+        const velocity_x: f32 = @bitCast(std.mem.readPackedInt(
+            u32,
+            buffer,
+            offset + @bitOffsetOf(Self, "velocity_x"),
+            .little,
+        ));
+        const velocity_y: f32 = @bitCast(std.mem.readPackedInt(
+            u32,
+            buffer,
+            offset + @bitOffsetOf(Self, "velocity_y"),
+            .little,
+        ));
+
+        return .{
+            .position_x = position_x,
+            .position_y = position_y,
+            .velocity_x = velocity_x,
+            .velocity_y = velocity_y,
+        };
     }
 };

@@ -44,26 +44,6 @@ var countdown: f32 = 3.5;
 var socket: Socket = undefined;
 
 pub fn main() !void {
-    var client_package = ClientPackage{
-        .packet_id = 1,
-        .player_state = .{
-            .position_x = 10,
-            .position_y = 10,
-            .charge = 5,
-        },
-        .board_state = BoardState.init(50),
-    };
-
-    client_package.board_state.projectiles[49] = .{
-        .position_x = 1,
-        .position_y = 1,
-        .velocity_x = 10,
-        .velocity_y = 10,
-    };
-
-    const encoded_package = client_package.encode();
-    std.debug.print("Encoded_package: {any}\n", .{encoded_package});
-
     ray.SetConfigFlags(ray.FLAG_MSAA_4X_HINT);
     ray.InitWindow(WIDTH, HEIGHT, "gravity");
     defer ray.CloseWindow();
@@ -324,4 +304,35 @@ fn server_wait_loop() !void {
     }
 }
 
-test "simple test" {}
+test "simple test" {
+    var client_package = ClientPackage{
+        .packet_id = 1,
+        .player_state = .{
+            .position_x = 10,
+            .position_y = 10,
+            .charge = 5,
+        },
+        .board_state = BoardState.init(50),
+    };
+
+    client_package.board_state.projectiles[49] = .{
+        .position_x = 1,
+        .position_y = 1,
+        .velocity_x = 10,
+        .velocity_y = 10,
+    };
+
+    const encoded_package = client_package.encode();
+
+    var decoded_package = ClientPackage{};
+    decoded_package.decode(encoded_package[0..]);
+
+    std.debug.assert(decoded_package.packet_id == client_package.packet_id);
+    std.debug.assert(decoded_package.player_state.position_x == client_package.player_state.position_x);
+    std.debug.assert(decoded_package.player_state.position_y == client_package.player_state.position_y);
+    std.debug.assert(decoded_package.board_state.projectile_count == client_package.board_state.projectile_count);
+    std.debug.assert(decoded_package.board_state.projectiles[49].position_x == client_package.board_state.projectiles[49].position_x);
+    std.debug.assert(decoded_package.board_state.projectiles[49].position_y == client_package.board_state.projectiles[49].position_y);
+    std.debug.assert(decoded_package.board_state.projectiles[49].velocity_x == client_package.board_state.projectiles[49].velocity_x);
+    std.debug.assert(decoded_package.board_state.projectiles[49].velocity_y == client_package.board_state.projectiles[49].velocity_y);
+}

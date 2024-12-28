@@ -7,14 +7,15 @@ const Socket = @import("socket.zig").Socket;
 const Package = @import("socket.zig").Package;
 const ProjectileState = @import("socket.zig").ProjectileState;
 const BoardState = @import("socket.zig").BoardState;
+const CommandState = @import("socket.zig").CommandState;
 
 const ArrayList = std.ArrayList;
 const Vector2 = ray.Vector2;
 const Color = ray.Color;
 const Rectangle = ray.Rectangle;
 
-pub const WIDTH: f32 = 1600;
-pub const HEIGHT: f32 = 800;
+pub const WIDTH: f32 = 1000;
+pub const HEIGHT: f32 = 600;
 
 pub const UPDATES_PER_SECOND: f32 = 60;
 pub const TIME_PER_UPDATE: f32 = 1.0 / UPDATES_PER_SECOND;
@@ -68,7 +69,8 @@ pub fn main() !void {
                     try menu_update();
                 },
                 .SinglePlayerLoop => {
-                    try main_update(&player1);
+                    try handle_player_input(&player1, true);
+                    try update_objects();
                 },
                 .ServerLogic => {
                     try server_logic_loop();
@@ -172,7 +174,11 @@ fn menu_draw() !void {
     }
 }
 
-fn handle_player_input(player: *Player) !void {
+var projectile_id: u32 = 0;
+var client_projectile_id: u32 = 0;
+var queue_shoot: ?CommandState = null;
+fn handle_player_input(player: *Player, is_host: bool) !void {
+    queue_shoot = null;
     if (ray.IsKeyDown(ray.KEY_DOWN)) {
         player.move(.{ .y = 1 });
     } else if (ray.IsKeyDown(ray.KEY_UP)) {
@@ -180,7 +186,28 @@ fn handle_player_input(player: *Player) !void {
     }
 
     if (ray.IsKeyDown(ray.KEY_F)) {
-        try player.shoot(allocator, &projectiles);
+        if (is_host) {
+            if (player.can_shoot()) {
+                try projectiles.append(Projectile.init(allocator, player, projectile_id));
+                player.reset_shoot();
+                projectile_id += 1;
+            }
+        } else {
+            if (player.can_shoot()) {
+                var new_projectile = Projectile.init(allocator, player, projectile_id);
+                player.reset_shoot();
+                queue_shoot = .{
+                    .shoot = 1,
+                    .position_x = new_projectile.position.x,
+                    .position_y = new_projectile.position.y,
+                    .velocity_x = new_projectile.velocity.x,
+                    .velocity_y = new_projectile.velocity.y,
+                    .charge = new_projectile.radius,
+                };
+                new_projectile.deinit();
+                projectile_id += 1;
+            }
+        }
     }
 }
 
@@ -272,11 +299,6 @@ fn update_objects() !void {
     player2.update();
 }
 
-fn main_update(controlling_player: *Player) !void {
-    try handle_player_input(controlling_player);
-    try update_objects();
-}
-
 fn main_draw() !void {
     for (particles.items) |particle| {
         particle.draw();
@@ -334,10 +356,26 @@ fn network_draw() !void {
     }
 }
 
-fn update_remote_player(player: *Player, package: *const Package) void {
+fn update_remote_player(player: *Player, package: *const Package) !void {
     player.rectangle.x = package.player_state.position_x;
     player.rectangle.y = package.player_state.position_y;
     player.charge = package.player_state.charge;
+
+    if (package.command.shoot == 1) {
+        try projectiles.append(Projectile.init_remote(
+            allocator,
+            player,
+            .{
+                .x = package.command.position_x,
+                .y = package.command.position_y,
+                .z = package.command.velocity_x,
+                .w = package.command.velocity_y,
+            },
+            package.command.charge,
+            client_projectile_id,
+        ));
+        client_projectile_id += 1;
+    }
 }
 
 fn server_logic_enter() !void {
@@ -356,7 +394,7 @@ fn start_countdown() void {
 }
 
 fn server_logic_loop() !void {
-    var incoming_package: Package = undefined;
+    var incoming_package: ?Package = null;
 
     if (socket.is_open) {
         const data = socket.receive();
@@ -365,12 +403,14 @@ fn server_logic_loop() !void {
                 start_countdown();
 
                 // respond to connection package
-                try send_info(&player1);
+                try send_info(&player1, true);
             }
 
             std.debug.print("Received {any}\n", .{package});
 
             incoming_package = package;
+
+            std.debug.print("Package {any}\n", .{package});
         }
     } else {
         socket.deinit();
@@ -379,9 +419,12 @@ fn server_logic_loop() !void {
     }
 
     if (game_started) {
-        update_remote_player(&player2, &incoming_package);
-        try main_update(&player1);
-        try send_info(&player1);
+        if (incoming_package) |*package| {
+            try update_remote_player(&player2, package);
+        }
+        try handle_player_input(&player1, true);
+        try update_objects();
+        try send_info(&player1, true);
     }
 }
 
@@ -392,12 +435,12 @@ fn client_logic_enter() !void {
     socket = try Socket.connect("127.0.0.1", 42069);
 
     // send connection package
-    try send_info(&player2);
+    try send_info(&player2, false);
 }
 
 var package_id: u32 = 0;
 fn client_logic_loop() !void {
-    var incoming_package: Package = undefined;
+    var incoming_package: ?Package = null;
 
     if (socket.is_open) {
         const data = socket.receive();
@@ -405,7 +448,7 @@ fn client_logic_loop() !void {
             if (!countdown_started and package.packet_id == 0) {
                 start_countdown();
             }
-            std.debug.print("Received {any}\n", .{package});
+            std.debug.print("{d} Received {any}\n", .{ package_id, package });
 
             incoming_package = package;
         }
@@ -416,55 +459,117 @@ fn client_logic_loop() !void {
     }
 
     if (game_started) {
-        update_remote_player(&player1, &incoming_package);
-        try main_update(&player2);
-        try send_info(&player2);
+        if (incoming_package) |*package| {
+            try update_remote_player(&player1, package);
+            try handle_remote_objects(package);
+        }
+        try handle_player_input(&player2, false);
+        try update_objects();
+        try send_info(&player2, false);
     }
 }
 
-fn build_package(player: *const Player) Package {
-    return .{ .packet_id = package_id, .player_state = .{
-        .position_x = player.rectangle.x,
-        .position_y = player.rectangle.y,
-        .charge = player.charge,
-    } };
+fn handle_remote_objects(package: *Package) !void {
+    for (0..package.board_state.projectile_count) |index| {
+        var existing = false;
+        const remote_projectile = &package.board_state.projectiles[index];
+        for (projectiles.items) |*projectile| {
+            if (projectile.id == remote_projectile.id) {
+                existing = true;
+                // projectile.to_delete = false;
+                projectile.position.x = remote_projectile.position_x;
+                projectile.position.y = remote_projectile.position_y;
+                projectile.velocity.x = remote_projectile.velocity_x;
+                projectile.velocity.y = remote_projectile.velocity_y;
+            }
+        }
+
+        if (!existing) {
+            try projectiles.append(Projectile.init_remote(
+                allocator,
+                if (remote_projectile.owner == 0) &player1 else &player2,
+                .{
+                    .x = remote_projectile.position_x,
+                    .y = remote_projectile.position_y,
+                    .z = remote_projectile.velocity_x,
+                    .w = remote_projectile.velocity_y,
+                },
+                remote_projectile.charge,
+                remote_projectile.id,
+            ));
+        }
+    }
 }
 
-fn send_info(player: *const Player) !void {
-    const outgoing_package = build_package(player);
+fn build_package(player: *const Player, is_server: bool) Package {
+    var package = Package{
+        .packet_id = package_id,
+        .command = .{},
+        .player_state = .{
+            .position_x = player.rectangle.x,
+            .position_y = player.rectangle.y,
+            .charge = player.charge,
+        },
+        .board_state = std.mem.zeroes(BoardState),
+    };
+
+    if (queue_shoot) |command| {
+        package.command = command;
+    }
+
+    if (is_server and projectiles.items.len > 0) {
+        package.board_state.projectile_count = @intCast(projectiles.items.len);
+        for (projectiles.items, 0..) |*projectile, index| {
+            package.board_state.projectiles[index] = .{
+                .id = projectile.id,
+                .owner = if (projectile.player.side == .Left) 0 else 1,
+                .position_x = projectile.position.x,
+                .position_y = projectile.position.y,
+                .velocity_x = projectile.velocity.x,
+                .velocity_y = projectile.velocity.y,
+                .charge = projectile.radius,
+            };
+        }
+    }
+
+    return package;
+}
+
+fn send_info(player: *const Player, from_server: bool) !void {
+    const outgoing_package = build_package(player, from_server);
     package_id += 1;
     try socket.send(outgoing_package);
 }
 
 test "simple test" {
-    var client_package = Package{
+    var package = Package{
         .packet_id = 1,
         .player_state = .{
             .position_x = 10,
             .position_y = 10,
             .charge = 5,
         },
-        .board_state = BoardState.init(50),
+        .board_state = BoardState.init(0),
     };
 
-    client_package.board_state.projectiles[49] = .{
+    package.board_state.projectiles[49] = .{
         .position_x = 1,
         .position_y = 1,
         .velocity_x = 10,
         .velocity_y = 10,
     };
 
-    const encoded_package = client_package.encode();
+    const encoded_package = package.encode();
 
     var decoded_package = Package{};
     decoded_package.decode(encoded_package[0..]);
 
-    std.debug.assert(decoded_package.packet_id == client_package.packet_id);
-    std.debug.assert(decoded_package.player_state.position_x == client_package.player_state.position_x);
-    std.debug.assert(decoded_package.player_state.position_y == client_package.player_state.position_y);
-    std.debug.assert(decoded_package.board_state.projectile_count == client_package.board_state.projectile_count);
-    std.debug.assert(decoded_package.board_state.projectiles[49].position_x == client_package.board_state.projectiles[49].position_x);
-    std.debug.assert(decoded_package.board_state.projectiles[49].position_y == client_package.board_state.projectiles[49].position_y);
-    std.debug.assert(decoded_package.board_state.projectiles[49].velocity_x == client_package.board_state.projectiles[49].velocity_x);
-    std.debug.assert(decoded_package.board_state.projectiles[49].velocity_y == client_package.board_state.projectiles[49].velocity_y);
+    std.debug.assert(decoded_package.packet_id == package.packet_id);
+    std.debug.assert(decoded_package.player_state.position_x == package.player_state.position_x);
+    std.debug.assert(decoded_package.player_state.position_y == package.player_state.position_y);
+    std.debug.assert(decoded_package.board_state.projectile_count == package.board_state.projectile_count);
+    std.debug.assert(decoded_package.board_state.projectiles[49].position_x == package.board_state.projectiles[49].position_x);
+    std.debug.assert(decoded_package.board_state.projectiles[49].position_y == package.board_state.projectiles[49].position_y);
+    std.debug.assert(decoded_package.board_state.projectiles[49].velocity_x == package.board_state.projectiles[49].velocity_x);
+    std.debug.assert(decoded_package.board_state.projectiles[49].velocity_y == package.board_state.projectiles[49].velocity_y);
 }

@@ -108,11 +108,12 @@ pub const Player = struct {
         self.rectangle.y = new_pos.y;
     }
 
-    pub fn shoot(self: *@This(), allocator: std.mem.Allocator, projectile_list: *ArrayList(Projectile)) !void {
-        if (self.cooldown <= 0 and self.charge >= Projectile.MIN_SIZE) {
-            try projectile_list.append(Projectile.init(self, allocator));
-            self.charge = Projectile.MIN_SIZE;
-            self.cooldown = PLAYER_COOLDOWN;
-        }
+    pub fn can_shoot(self: *@This()) bool {
+        return self.cooldown <= 0 and self.charge >= Projectile.MIN_SIZE;
+    }
+
+    pub fn reset_shoot(self: *@This()) void {
+        self.charge = Projectile.MIN_SIZE;
+        self.cooldown = PLAYER_COOLDOWN;
     }
 };

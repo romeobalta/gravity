@@ -13,6 +13,7 @@ const Rectangle = ray.Rectangle;
 const Vector2 = ray.Vector2;
 
 pub const Projectile = struct {
+    id: u32 = 0,
     position: Vector2 = .{ .x = 0, .y = 0 },
     radius: f32 = 1,
     velocity: Vector2 = .{ .x = 0, .y = 0 },
@@ -30,13 +31,14 @@ pub const Projectile = struct {
 
     pub const MAX_DISTANCE_GRAVITY: f32 = 100;
 
-    pub fn init(player: *Player, allocator: std.mem.Allocator) Projectile {
+    pub fn init(allocator: std.mem.Allocator, player: *Player, id: u32) Projectile {
         const position_multiplier: f32 = switch (player.side) {
             .Left => 1,
             .Right => -1,
         };
 
         return .{
+            .id = id,
             .position = ray.Vector2Add(.{
                 .x = player.rectangle.x,
                 .y = player.rectangle.y,
@@ -52,6 +54,23 @@ pub const Projectile = struct {
                 },
                 calculate_velocity(player.charge),
             ),
+            .player = player,
+            .tail = ArrayList(Particle).init(allocator),
+        };
+    }
+
+    pub fn init_remote(allocator: std.mem.Allocator, player: *Player, pos_vel: ray.Vector4, charge: f32, id: u32) Projectile {
+        return .{
+            .id = id,
+            .position = .{
+                .x = pos_vel.x,
+                .y = pos_vel.y,
+            },
+            .radius = charge,
+            .velocity = .{
+                .x = pos_vel.z,
+                .y = pos_vel.w,
+            },
             .player = player,
             .tail = ArrayList(Particle).init(allocator),
         };

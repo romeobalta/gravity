@@ -32,7 +32,7 @@ var player2 = Player.init_player_2();
 
 const GameState = enum {
     Menu,
-    Loop,
+    SinglePlayerLoop,
     ServerLogic,
     ClientLogic,
 };
@@ -48,8 +48,6 @@ pub fn main() !void {
     ray.InitWindow(WIDTH, HEIGHT, "gravity");
     defer ray.CloseWindow();
 
-    // var time_since_last_update: f32 = 0;
-
     projectiles = ArrayList(Projectile).init(allocator);
     defer projectiles.deinit();
 
@@ -59,23 +57,18 @@ pub fn main() !void {
     ray.SetTargetFPS(60);
 
     while (!ray.WindowShouldClose()) {
-        // time_since_last_update += ray.GetFrameTime();
-
         if (countdown > 0) {
             countdown -= ray.GetFrameTime();
         }
 
         // update
-        // if (time_since_last_update > TIME_PER_UPDATE)
         {
-            // time_since_last_update = 0;
-
             switch (game_state) {
                 .Menu => {
                     try menu_update();
                 },
-                .Loop => {
-                    try loop_update();
+                .SinglePlayerLoop => {
+                    try main_update(&player1);
                 },
                 .ServerLogic => {
                     try server_logic_loop();
@@ -95,12 +88,19 @@ pub fn main() !void {
             defer ray.EndDrawing();
 
             ray.ClearBackground(ray.BLACK);
-            // ray.DrawFPS(10, HEIGHT - 20);
 
-            if (game_state == .Menu) {
-                try menu_draw();
+            switch (game_state) {
+                .Menu => {
+                    try menu_draw();
+                },
+                .ServerLogic,
+                .ClientLogic,
+                => {
+                    try network_draw();
+                },
+                else => {},
             }
-            try loop_draw();
+            try main_draw();
         }
     }
 }
@@ -115,7 +115,7 @@ fn menu_update() !void {
     if (ray.IsKeyPressed(ray.KEY_ENTER)) {
         switch (selected) {
             0 => {
-                game_state = .Loop;
+                game_state = .SinglePlayerLoop;
             },
             1 => {
                 game_state = .ServerLogic;
@@ -172,17 +172,19 @@ fn menu_draw() !void {
     }
 }
 
-fn loop_update() !void {
+fn handle_player_input(player: *Player) !void {
     if (ray.IsKeyDown(ray.KEY_DOWN)) {
-        player1.move(.{ .y = 1 });
+        player.move(.{ .y = 1 });
     } else if (ray.IsKeyDown(ray.KEY_UP)) {
-        player1.move(.{ .y = -1 });
+        player.move(.{ .y = -1 });
     }
 
     if (ray.IsKeyDown(ray.KEY_F)) {
-        try player1.shoot(allocator, &projectiles);
+        try player.shoot(allocator, &projectiles);
     }
+}
 
+fn update_objects() !void {
     for (projectiles.items, 0..) |*projectile, i| {
         for (projectiles.items, 0..) |*target, j| {
             if (i >= j) continue;
@@ -270,7 +272,12 @@ fn loop_update() !void {
     player2.update();
 }
 
-fn loop_draw() !void {
+fn main_update(controlling_player: *Player) !void {
+    try handle_player_input(controlling_player);
+    try update_objects();
+}
+
+fn main_draw() !void {
     for (particles.items) |particle| {
         particle.draw();
     }
@@ -295,63 +302,138 @@ fn create_debris(projectile: *Projectile) !void {
     }
 }
 
+fn network_draw() !void {
+    const remaining = if (countdown_started) (3 - @floor(ray.GetTime() - game_started_time)) else 0;
+    if (remaining >= 0) {
+        {
+            const font_size: c_int = 60;
+            const string = "GAME STARTING";
+            const string_width = @divExact(ray.MeasureText(string, font_size), 2);
+            const position_x: c_int = @as(c_int, WIDTH / 2) - (string_width);
+            ray.DrawRectangleGradientH(position_x - 30, 90, 2 * string_width + 60, font_size + 15, ray.BLUE, ray.ORANGE);
+            ray.DrawText(string, position_x, 100, font_size, ray.BLACK);
+        }
+        {
+            const string = if (countdown_started) try std.fmt.allocPrintZ(allocator, "{d}", .{remaining}) else try std.fmt.allocPrintZ(allocator, "Waiting for player to connect", .{});
+            defer allocator.free(string);
+            const starting_pos = 200;
+            const font_size: c_int = 30;
+            const string_width = @divTrunc(ray.MeasureText(string.ptr, font_size), 2);
+            const position_x: c_int = @as(c_int, WIDTH / 2) - (string_width);
+
+            ray.DrawText(
+                string.ptr,
+                position_x,
+                starting_pos,
+                font_size,
+                ray.BLUE,
+            );
+        }
+    } else if (!game_started) {
+        game_started = true;
+    }
+}
+
+fn update_remote_player(player: *Player, package: *const Package) void {
+    player.rectangle.x = package.player_state.position_x;
+    player.rectangle.y = package.player_state.position_y;
+    player.charge = package.player_state.charge;
+}
+
 fn server_logic_enter() !void {
+    countdown_started = false;
+    game_started = false;
+
     socket = try Socket.init("127.0.0.1", 42069);
 }
 
-var sent = false;
+var countdown_started = false;
+var game_started = false;
+var game_started_time: f64 = undefined;
+fn start_countdown() void {
+    countdown_started = true;
+    game_started_time = ray.GetTime();
+}
+
 fn server_logic_loop() !void {
+    var incoming_package: Package = undefined;
+
     if (socket.is_open) {
         const data = socket.receive();
         if (data) |package| {
+            if (!countdown_started and package.packet_id == 0) {
+                start_countdown();
+
+                // respond to connection package
+                try send_info(&player1);
+            }
+
             std.debug.print("Received {any}\n", .{package});
 
-            const server_package = Package{
-                .packet_id = 2,
-                .player_state = .{
-                    .position_x = 10,
-                    .position_y = 10,
-                    .charge = 5,
-                },
-                .board_state = BoardState.init(50),
-            };
-
-            try socket.send(server_package);
+            incoming_package = package;
         }
     } else {
         socket.deinit();
         std.debug.print("NET: Socket is closed, going back to lobby \n", .{});
         game_state = .Menu;
+    }
+
+    if (game_started) {
+        update_remote_player(&player2, &incoming_package);
+        try main_update(&player1);
+        try send_info(&player1);
     }
 }
 
 fn client_logic_enter() !void {
+    countdown_started = false;
+    game_started = false;
+
     socket = try Socket.connect("127.0.0.1", 42069);
 
-    const client_package = Package{
-        .packet_id = 1,
-        .player_state = .{
-            .position_x = 10,
-            .position_y = 10,
-            .charge = 5,
-        },
-        .board_state = BoardState.init(50),
-    };
-
-    try socket.send(client_package);
+    // send connection package
+    try send_info(&player2);
 }
 
+var package_id: u32 = 0;
 fn client_logic_loop() !void {
+    var incoming_package: Package = undefined;
+
     if (socket.is_open) {
         const data = socket.receive();
         if (data) |package| {
+            if (!countdown_started and package.packet_id == 0) {
+                start_countdown();
+            }
             std.debug.print("Received {any}\n", .{package});
+
+            incoming_package = package;
         }
     } else {
         socket.deinit();
         std.debug.print("NET: Socket is closed, going back to lobby \n", .{});
         game_state = .Menu;
     }
+
+    if (game_started) {
+        update_remote_player(&player1, &incoming_package);
+        try main_update(&player2);
+        try send_info(&player2);
+    }
+}
+
+fn build_package(player: *const Player) Package {
+    return .{ .packet_id = package_id, .player_state = .{
+        .position_x = player.rectangle.x,
+        .position_y = player.rectangle.y,
+        .charge = player.charge,
+    } };
+}
+
+fn send_info(player: *const Player) !void {
+    const outgoing_package = build_package(player);
+    package_id += 1;
+    try socket.send(outgoing_package);
 }
 
 test "simple test" {

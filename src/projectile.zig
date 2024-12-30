@@ -113,7 +113,9 @@ pub const Projectile = struct {
     }
 
     pub fn update(self: *@This()) void {
-        self.velocity = ray.Vector2Add(self.velocity, self.forces);
+        const delta_velocity = ray.Vector2Scale(self.forces, ray.GetFrameTime());
+        self.velocity = ray.Vector2Add(self.velocity, delta_velocity);
+        // self.velocity = ray.Vector2Add(self.velocity, self.forces);
         self.position = ray.Vector2Add(self.position, self.velocity);
         self.forces = ray.Vector2Zero();
 
@@ -157,16 +159,17 @@ pub const Projectile = struct {
     }
 
     pub fn compute_gravity(self: *@This(), target: *@This()) void {
-        const distance = ray.Vector2Distance(self.position, target.position);
-        const gravity = (G * (self.radius + self.extra_mass) * (target.radius + target.extra_mass) * 50) / (distance * distance);
+        const distance = ray.Vector2Distance(self.position, target.position) + 5;
+
+        const force_inverse = G * 10 / (distance * distance);
 
         const direction = ray.Vector2Normalize(ray.Vector2Subtract(self.position, target.position));
 
-        const selfGravity = if (self.radius + self.extra_mass > target.radius + target.extra_mass) gravity / (self.radius * 10) else gravity / (self.radius + self.extra_mass);
-        const targetGravity = if (self.radius + self.extra_mass < target.radius + target.extra_mass) gravity / (target.radius * 10) else gravity / (target.radius + target.extra_mass);
+        const self_acceleration = force_inverse * std.math.pow(f32, (target.radius + target.extra_mass), 3);
+        const target_acceleration = force_inverse * std.math.pow(f32, (self.radius + self.extra_mass), 3);
 
-        self.forces = ray.Vector2Add(self.forces, ray.Vector2Negate(ray.Vector2Scale(direction, selfGravity)));
-        target.forces = ray.Vector2Add(target.forces, ray.Vector2Scale(direction, targetGravity));
+        self.forces = ray.Vector2Add(self.forces, ray.Vector2Negate(ray.Vector2Scale(direction, self_acceleration)));
+        target.forces = ray.Vector2Add(target.forces, ray.Vector2Scale(direction, target_acceleration));
     }
 
     pub fn consume(self: *@This(), target: *@This()) void {

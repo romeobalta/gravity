@@ -28,14 +28,31 @@ const allocator = gpa.allocator();
 var projectiles: ArrayList(Projectile) = undefined;
 var particles: ArrayList(Particle) = undefined;
 
-var player1 = Player.init_player_1();
-var player2 = Player.init_player_2();
+var player1: Player = undefined;
+var player2: Player = undefined;
+
+const ScoreBitField = packed struct {
+    draw: bool = false,
+    player1: bool = false,
+    player2: bool = false,
+
+    const Self = @This();
+
+    fn reset(self: *Self) void {
+        self.draw = false;
+        self.player1 = false;
+        self.player2 = false;
+    }
+};
+
+var score = ScoreBitField{};
 
 const GameState = enum {
     Menu,
     SinglePlayerLoop,
     ServerLogic,
     ClientLogic,
+    Score,
 };
 
 // TODO: .Menu
@@ -43,6 +60,14 @@ var game_state: GameState = .Menu;
 var countdown: f32 = 3.5;
 
 var socket: Socket = undefined;
+
+fn reset_game_state() void {
+    particles.clearRetainingCapacity();
+    projectiles.clearRetainingCapacity();
+
+    player1 = Player.init_player_1();
+    player2 = Player.init_player_2();
+}
 
 pub fn main() !void {
     ray.SetConfigFlags(ray.FLAG_MSAA_4X_HINT);
@@ -56,6 +81,8 @@ pub fn main() !void {
     defer particles.deinit();
 
     ray.SetTargetFPS(60);
+
+    reset_game_state();
 
     while (!ray.WindowShouldClose()) {
         if (countdown > 0) {
@@ -71,12 +98,16 @@ pub fn main() !void {
                 .SinglePlayerLoop => {
                     try handle_player_input(&player1, true);
                     try update_objects();
+                    handle_end_game();
                 },
                 .ServerLogic => {
                     try server_logic_loop();
                 },
                 .ClientLogic => {
                     try client_logic_loop();
+                },
+                .Score => {
+                    score_loop();
                 },
                 // else => {
                 //     std.debug.panic("oh no", .{});
@@ -91,6 +122,7 @@ pub fn main() !void {
 
             ray.ClearBackground(ray.BLACK);
 
+            try main_draw();
             switch (game_state) {
                 .Menu => {
                     try menu_draw();
@@ -100,9 +132,11 @@ pub fn main() !void {
                 => {
                     try network_draw();
                 },
+                .Score => {
+                    try score_draw();
+                },
                 else => {},
             }
-            try main_draw();
         }
     }
 }
@@ -299,6 +333,63 @@ fn update_objects() !void {
     player2.update();
 }
 
+fn handle_end_game() void {
+    score.reset();
+    if (player1.life > 0 and player2.life <= 0) {
+        game_state = .Score;
+        score.player1 = true;
+    } else if (player1.life <= 0 and player2.life > 0) {
+        game_state = .Score;
+        score.player2 = true;
+    } else if (player1.life <= 0 and player2.life <= 0) {
+        game_state = .Score;
+        score.draw = true;
+    }
+}
+
+fn score_draw() !void {
+    {
+        const font_size: c_int = 40;
+        var string: []u8 = undefined;
+        if (score.draw) {
+            string = try std.fmt.allocPrintZ(allocator, "You're both losers lol", .{});
+        } else if (score.player1) {
+            string = try std.fmt.allocPrintZ(allocator, "Blue dude destroyed the orange one ggs", .{});
+        } else if (score.player2) {
+            string = try std.fmt.allocPrintZ(allocator, "Orange dude destroyed the blue one ggs", .{});
+        } else {
+            string = try std.fmt.allocPrintZ(allocator, "Something went terrribly wrong", .{});
+        }
+        defer allocator.free(string);
+        const string_width = @divExact(ray.MeasureText(string.ptr, font_size), 2);
+        const position_x: c_int = @as(c_int, WIDTH / 2) - (string_width);
+        ray.DrawRectangleGradientH(position_x - 30, 90, 2 * string_width + 60, font_size + 15, ray.BLUE, ray.ORANGE);
+        ray.DrawText(string.ptr, position_x, 100, font_size, ray.BLACK);
+    }
+    {
+        const string = "Press ENTER to go back to main menu";
+        const starting_pos = 200;
+        const font_size: c_int = 30;
+        const string_width = @divTrunc(ray.MeasureText(string.ptr, font_size), 2);
+        const position_x: c_int = @as(c_int, WIDTH / 2) - (string_width);
+
+        ray.DrawText(
+            string.ptr,
+            position_x,
+            starting_pos,
+            font_size,
+            ray.BLUE,
+        );
+    }
+}
+
+fn score_loop() void {
+    if (ray.IsKeyPressed(ray.KEY_ENTER)) {
+        game_state = .Menu;
+        reset_game_state();
+    }
+}
+
 fn main_draw() !void {
     for (particles.items) |particle| {
         particle.draw();
@@ -416,6 +507,7 @@ fn server_logic_loop() !void {
         socket.deinit();
         std.debug.print("NET: Socket is closed, going back to lobby \n", .{});
         game_state = .Menu;
+        reset_game_state();
     }
 
     if (game_started) {
@@ -425,6 +517,7 @@ fn server_logic_loop() !void {
         try handle_player_input(&player1, true);
         try update_objects();
         try send_info(&player1, true);
+        handle_end_game();
     }
 }
 
@@ -456,6 +549,7 @@ fn client_logic_loop() !void {
         socket.deinit();
         std.debug.print("NET: Socket is closed, going back to lobby \n", .{});
         game_state = .Menu;
+        reset_game_state();
     }
 
     if (game_started) {
@@ -466,6 +560,7 @@ fn client_logic_loop() !void {
         try handle_player_input(&player2, false);
         try update_objects();
         try send_info(&player2, false);
+        handle_end_game();
     }
 }
 
